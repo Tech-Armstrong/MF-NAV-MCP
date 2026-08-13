@@ -12,6 +12,8 @@ Tools exposed
     search_funds(query, limit)          fuzzy fund-name -> scheme_code resolver
     get_fund_returns(scheme_codes, period)
                                         point-to-point + CAGR for 1..N funds
+    get_fund_returns_between(scheme_codes, start_date, end_date)
+                                        same, over an explicit ISO date range
     get_category_returns(category, period, sort_by, ascending, staleness_days)
                                         returns for every fund in a category
     list_categories()                   distinct category names
@@ -271,9 +273,15 @@ def _cagr(nav_start: float, nav_end: float,
     Annualized CAGR (%) over the REALIZED window, using actual day-count.
     Returned only when the window represents more than a year — for <=1Y periods
     an annualized figure is misleading, so it's None.
+
+    For a CUSTOM date range (period == "CUSTOM") there is no named window to key
+    off, so the test is purely the realized duration — the same rule SI/YTD use.
     """
     years = (d_end - d_start).days / 365.25
-    long_enough = period in _LONG_PERIODS or (period in {"SI", "YTD"} and years > 1.0)
+    long_enough = (
+        period in _LONG_PERIODS
+        or (period in {"SI", "YTD", "CUSTOM"} and years > 1.0)
+    )
     if not long_enough or not nav_start or years <= 0:
         return None
     return round(((nav_end / nav_start) ** (1 / years) - 1) * 100, 4)
@@ -281,14 +289,21 @@ def _cagr(nav_start: float, nav_end: float,
 
 # ── core: point-to-point returns for many funds (set-based) ─────────────────────
 
-def _compute_returns(scheme_codes: list[str], period: str) -> list[dict]:
+def _compute_returns(scheme_codes: list[str], period: str,
+                     window: Optional[tuple[date, date]] = None) -> list[dict]:
     """
     Set-based returns for a list of scheme_codes. Regardless of list length this
     issues a constant handful of queries (metadata, anchors, targets, start
     NAVs, end NAVs) rather than looping per fund.
+
+    `window` overrides the named period with an explicit (start_date, end_date)
+    applied to every fund — the caller passes period="CUSTOM". Named periods
+    derive their window per fund from that fund's own anchor; a custom window is
+    the same absolute pair for all of them, which is the whole point of asking
+    for one.
     """
     p = period.upper().strip()
-    if p not in _VALID_PERIODS:
+    if window is None and p not in _VALID_PERIODS:
         raise ValueError(
             f"Unrecognised period '{period}'. Valid: {', '.join(sorted(_VALID_PERIODS))}"
         )
@@ -342,8 +357,15 @@ def _compute_returns(scheme_codes: list[str], period: str) -> list[dict]:
         if code not in anchors or anchors[code][0] is None:
             results[code] = _row(code, error="no NAV data for this scheme")
             continue
-        anchor, inception = anchors[code]
-        s_target, e_target, snap = _resolve_window(p, anchor, inception)
+        if window is not None:
+            # Explicit range: same absolute dates for every fund. "before" snaps
+            # the start back over holidays so the full window is captured, and
+            # the end resolves to the latest NAV on/before end_date — matching
+            # the trailing-window convention.
+            s_target, e_target, snap = window[0], window[1], "before"
+        else:
+            anchor, inception = anchors[code]
+            s_target, e_target, snap = _resolve_window(p, anchor, inception)
         start_snap = snap  # same for every fund in a single call
         targets.append((code, s_target, e_target))
 
@@ -547,6 +569,60 @@ def get_fund_returns(scheme_codes: Union[str, list[str]], period: str) -> dict:
     return {
         "period": period.upper().strip(),
         "period_end": "per-fund-last-nav",
+        "results": results,
+    }
+
+
+@mcp.tool()
+def get_fund_returns_between(
+    scheme_codes: Union[str, list[str]],
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """Point-to-point return and CAGR over an EXPLICIT date range.
+
+    Use this when the user names actual dates ("returns from March 2024 to June
+    2025"); use get_fund_returns for the standard trailing windows (1Y, 3Y, YTD…).
+    Both dates are ISO YYYY-MM-DD and apply to every fund in the list.
+
+    The start snaps back to the latest NAV on/before start_date and the end to
+    the latest NAV on/before end_date, so the realized window may be a day or two
+    narrower than requested — non-trading days have no NAV. The actual dates used
+    are always returned as start_nav_date / end_nav_date; read those, not the
+    requested ones, when reporting the window. cagr_pct is populated only when the
+    realized window exceeds a year.
+
+    A start_date before a fund's inception yields an error row for that fund
+    rather than silently starting at inception, which would answer a different
+    question than the one asked.
+
+    Args:
+        scheme_codes: A single scheme_code or a list of them.
+        start_date: Window start, ISO YYYY-MM-DD.
+        end_date: Window end, ISO YYYY-MM-DD.
+    """
+    try:
+        d_start = date.fromisoformat(start_date.strip())
+        d_end = date.fromisoformat(end_date.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"start_date and end_date must be ISO YYYY-MM-DD dates "
+            f"(got '{start_date}' and '{end_date}'): {exc}"
+        ) from None
+
+    if d_start >= d_end:
+        raise ValueError(
+            f"start_date ({d_start}) must be earlier than end_date ({d_end})."
+        )
+
+    if isinstance(scheme_codes, str):
+        scheme_codes = [scheme_codes]
+    results = _compute_returns(scheme_codes, "CUSTOM", window=(d_start, d_end))
+    return {
+        "period": "CUSTOM",
+        "start_date": str(d_start),
+        "end_date": str(d_end),
+        "period_end": "explicit-end-date",
         "results": results,
     }
 

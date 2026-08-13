@@ -8,6 +8,7 @@ venv/
 
 # Local blob cache (BLOB_CACHE_DIR); parquet downloaded from Azure Blob.
 .cache/
+_blobcache*/
 
 # Python build artifacts
 __pycache__/

@@ -136,6 +136,15 @@ instead of the local paths.
   annualized `cagr_pct` for one or many funds. `cagr_pct` is populated only for
   windows longer than a year (2Y/3Y/5Y, and SI when the fund is >1yr old); it is
   `null` for shorter windows.
+- **get_fund_returns_between(scheme_codes, start_date, end_date)** — the same
+  numbers over an **explicit** ISO `YYYY-MM-DD` range instead of a named period,
+  for when the user gives actual dates. Unlike the named periods, the window is
+  the same absolute pair for every fund rather than anchored per-fund. Both ends
+  snap to the latest NAV on/before the requested date, so the realized window can
+  be a day or two narrower — read `start_nav_date` / `end_nav_date` for what was
+  actually used. `cagr_pct` follows the realized duration (>1yr). A `start_date`
+  before a fund's inception gives that fund an error row rather than silently
+  starting at inception.
 - **get_category_returns(category, period, sort_by, ascending, staleness_days=7)**
   — returns for every fund in a category, ranked, with a staleness guard.
 - **list_categories()** / **list_funds_in_category(category)** — discovery.
