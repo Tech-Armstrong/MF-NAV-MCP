@@ -90,6 +90,30 @@ NAV_HISTORY_PATH = os.environ.get("NAV_HISTORY_PATH", "./data/nav_history.parque
 SCHEME_MASTER_PATH = os.environ.get("SCHEME_MASTER_PATH", "./data/scheme_master.parquet")
 AZURE_CONN = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 
+# Index benchmark parquet. Unlike the NAV paths these default to files COMMITTED
+# to the repo (see fetch_index_data.py), so they resolve relative to this file
+# rather than the process working directory — MCP clients spawn the server from
+# arbitrary directories. Never read from Azure: the data is small and versioned
+# with the code.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+INDEX_HISTORY_PATH = os.environ.get(
+    "INDEX_HISTORY_PATH", os.path.join(_HERE, "data", "index_history.parquet"))
+INDEX_MASTER_PATH = os.environ.get(
+    "INDEX_MASTER_PATH", os.path.join(_HERE, "data", "index_master.parquet"))
+
+# Friendly names -> Yahoo tickers, so callers can say "NIFTY50" instead of
+# "^NSEI". Resolution is case-insensitive and strips spaces.
+_INDEX_ALIASES = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "NIFTY100": "^CNX100",
+    "NIFTY500": "^CRSLDX",
+    "SENSEX": "^BSESN",
+    "BSESENSEX": "^BSESN",
+    "NIFTYMIDCAP50": "^NSMIDCP",
+    "MIDCAP50": "^NSMIDCP",
+}
+
 _VALID_PERIODS = {
     "1W", "2W",
     "1M", "3M", "6M", "9M",
@@ -216,6 +240,26 @@ def _build_connection() -> duckdb.DuckDBPyConnection:
         f"CREATE OR REPLACE VIEW scheme_master AS "
         f"SELECT * FROM read_parquet({_lit(scheme_path)});"
     )
+
+    # Index benchmarks: committed local parquet, never Azure. Optional — if the
+    # files are absent the fund tools must still work, so the index views are
+    # simply not created and the index tools report the situation rather than
+    # the whole server failing to import.
+    if os.path.exists(INDEX_HISTORY_PATH) and os.path.exists(INDEX_MASTER_PATH):
+        con.execute(
+            f"CREATE OR REPLACE VIEW index_history AS "
+            f"SELECT * FROM read_parquet({_lit(INDEX_HISTORY_PATH)});"
+        )
+        con.execute(
+            f"CREATE OR REPLACE VIEW index_master AS "
+            f"SELECT * FROM read_parquet({_lit(INDEX_MASTER_PATH)});"
+        )
+    else:
+        sys.stderr.write(
+            "NAV MCP: index parquet not found at "
+            f"{INDEX_HISTORY_PATH} / {INDEX_MASTER_PATH}; index tools will be "
+            "unavailable. Run `python fetch_index_data.py` to create them.\n"
+        )
     return con
 
 
@@ -432,6 +476,143 @@ def _compute_returns(scheme_codes: list[str], period: str,
         )
 
     return [results[c] for c in codes]
+
+
+# ── core: point-to-point returns for indices ───────────────────────────────────
+
+def _resolve_ticker(t: str) -> str:
+    """'nifty 50' / 'NIFTY50' / '^NSEI' -> '^NSEI'. Unknown values pass through
+    unchanged so an explicit ticker still works even if it is not aliased."""
+    key = re.sub(r"[\s_-]+", "", t.strip().upper())
+    return _INDEX_ALIASES.get(key, t.strip())
+
+
+def _index_available() -> bool:
+    try:
+        CON.execute("SELECT 1 FROM index_master LIMIT 1;")
+        return True
+    except Exception:
+        return False
+
+
+def _compute_index_returns(tickers: list[str], period: str,
+                           window: Optional[tuple[date, date]] = None) -> list[dict]:
+    """
+    Index counterpart of _compute_returns, sharing the same window resolution
+    (_resolve_window) and the same math (_absolute_return, _cagr) so index and
+    fund returns are computed identically and stay comparable.
+
+    It is a separate function rather than a parameterized version of
+    _compute_returns because the two read different tables with different column
+    names and return differently-shaped rows; sharing the maths while keeping the
+    queries explicit is clearer than one function templating both schemas.
+    """
+    p = period.upper().strip()
+    if window is None and p not in _VALID_PERIODS:
+        raise ValueError(
+            f"Unrecognised period '{period}'. Valid: {', '.join(sorted(_VALID_PERIODS))}"
+        )
+
+    resolved = list(dict.fromkeys(_resolve_ticker(t) for t in tickers))
+    if not resolved:
+        return []
+
+    ph = ", ".join(["?"] * len(resolved))
+
+    meta_rows = CON.execute(
+        f"SELECT ticker, index_name FROM index_master WHERE ticker IN ({ph})",
+        resolved,
+    ).fetchall()
+    meta = {r[0]: r[1] for r in meta_rows}
+
+    anchor_rows = CON.execute(
+        f"""SELECT ticker, MAX(nav_date), MIN(nav_date)
+            FROM index_history WHERE ticker IN ({ph})
+            GROUP BY ticker""",
+        resolved,
+    ).fetchall()
+    anchors = {r[0]: (r[1], r[2]) for r in anchor_rows}
+
+    def _row(ticker, **extra):
+        base = {
+            "ticker": ticker,
+            "index_name": meta.get(ticker),
+            "start_date": None, "start_close": None,
+            "end_date": None, "end_close": None,
+            "return_pct": None, "cagr_pct": None, "error": None,
+        }
+        base.update(extra)
+        return base
+
+    targets, results, start_snap = [], {}, None
+    for ticker in resolved:
+        if ticker not in meta:
+            known = ", ".join(sorted(meta.keys()) or _INDEX_ALIASES.values())
+            results[ticker] = _row(
+                ticker,
+                error=f"unknown index '{ticker}'. Use list_indices() to see "
+                      f"available tickers.")
+            continue
+        if ticker not in anchors or anchors[ticker][0] is None:
+            results[ticker] = _row(ticker, error="no price history for this index")
+            continue
+        anchor, inception = anchors[ticker]
+        if window is not None:
+            s_target, e_target, snap = window[0], window[1], "before"
+        else:
+            s_target, e_target, snap = _resolve_window(p, anchor, inception)
+        start_snap = snap
+        targets.append((ticker, s_target, e_target))
+
+    start_rows, end_rows = {}, {}
+    if targets:
+        CON.execute("CREATE OR REPLACE TEMP TABLE _idx_targets("
+                    "ticker VARCHAR, start_target DATE, end_target DATE);")
+        CON.executemany("INSERT INTO _idx_targets VALUES (?, ?, ?);", targets)
+
+        order = "DESC" if start_snap == "before" else "ASC"
+        op = "<=" if start_snap == "before" else ">="
+        for t, d, v in CON.execute(f"""
+            SELECT t.ticker, h.nav_date, h.close
+            FROM _idx_targets t
+            JOIN index_history h
+              ON h.ticker = t.ticker AND h.nav_date {op} t.start_target
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY t.ticker ORDER BY h.nav_date {order}) = 1
+        """).fetchall():
+            start_rows[t] = (d, v)
+
+        for t, d, v in CON.execute("""
+            SELECT t.ticker, h.nav_date, h.close
+            FROM _idx_targets t
+            JOIN index_history h
+              ON h.ticker = t.ticker AND h.nav_date <= t.end_target
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY t.ticker ORDER BY h.nav_date DESC) = 1
+        """).fetchall():
+            end_rows[t] = (d, v)
+
+    for ticker, s_target, _e in targets:
+        s, e = start_rows.get(ticker), end_rows.get(ticker)
+        if not s:
+            results[ticker] = _row(
+                ticker,
+                end_date=e[0] if e else None, end_close=e[1] if e else None,
+                error=f"no close on/around start target {s_target}")
+            continue
+        if not e:
+            results[ticker] = _row(ticker, start_date=s[0], start_close=s[1],
+                                   error="no close on/before anchor")
+            continue
+        results[ticker] = _row(
+            ticker,
+            start_date=s[0], start_close=s[1],
+            end_date=e[0], end_close=e[1],
+            return_pct=_absolute_return(s[1], e[1]),
+            cagr_pct=_cagr(s[1], e[1], s[0], e[0], p),
+        )
+
+    return [results[t] for t in resolved]
 
 
 # ── auth (optional; enabled when PUBLIC_BASE_URL is set) ────────────────────────
@@ -702,6 +883,130 @@ def get_category_returns(
         "avg_return_pct": avg_ret,
         "avg_cagr_pct": avg_cagr,
         "results": ordered,
+    }
+
+
+@mcp.tool()
+def list_indices() -> dict:
+    """List the benchmark indices available, with their tickers and history span.
+
+    Call this first when the user names an index; the returned ticker feeds into
+    get_index_returns / get_index_returns_between. Friendly aliases (NIFTY50,
+    NIFTY100, NIFTY500, SENSEX, MIDCAP50) are also accepted by those tools.
+    """
+    if not _index_available():
+        return {"indices": [], "count": 0,
+                "error": "Index data is not loaded on this server. Run "
+                         "`python fetch_index_data.py` to generate it."}
+    rows = CON.execute("""
+        SELECT m.ticker, m.index_name,
+               MIN(h.nav_date), MAX(h.nav_date), COUNT(*)
+        FROM index_master m
+        LEFT JOIN index_history h ON h.ticker = m.ticker
+        GROUP BY m.ticker, m.index_name
+        ORDER BY m.index_name
+    """).fetchall()
+    return {
+        "count": len(rows),
+        "return_type": "price",
+        "note": "Index levels are PRICE return (dividends excluded); fund NAVs "
+                "are TOTAL return. Index figures therefore understate a "
+                "like-for-like comparison by roughly 1-1.5%/yr for equity.",
+        "indices": [
+            {"ticker": r[0], "index_name": r[1],
+             "history_from": str(r[2]) if r[2] else None,
+             "history_to": str(r[3]) if r[3] else None,
+             "trading_days": r[4]}
+            for r in rows
+        ],
+    }
+
+
+@mcp.tool()
+def get_index_returns(tickers: Union[str, list[str]], period: str) -> dict:
+    """Point-to-point return and CAGR for one or many benchmark indices.
+
+    The index counterpart of get_fund_returns: same period strings, same window
+    conventions (each index's window ends at its own latest close), and the same
+    maths, so index and fund figures over the same period are directly
+    comparable — with one caveat, below.
+
+    Accepts tickers (^NSEI) or friendly aliases (NIFTY50, NIFTY500, SENSEX).
+    Use list_indices() to see what is available.
+
+    IMPORTANT: index levels are PRICE return — they exclude dividends — whereas
+    fund NAVs are TOTAL return. A fund will therefore look better against its
+    benchmark than it truly is, by roughly 1-1.5%/yr for Indian equity. Say so
+    when presenting a fund-vs-index comparison.
+
+    Args:
+        tickers: A single ticker/alias or a list of them.
+        period: One of 1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y,YTD,MTD,SI.
+    """
+    if not _index_available():
+        raise ValueError(
+            "Index data is not loaded on this server. Run "
+            "`python fetch_index_data.py` to generate ./data/index_*.parquet.")
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    return {
+        "period": period.upper().strip(),
+        "period_end": "per-index-last-close",
+        "return_type": "price",
+        "results": _compute_index_returns(tickers, period),
+    }
+
+
+@mcp.tool()
+def get_index_returns_between(
+    tickers: Union[str, list[str]],
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """Index return and CAGR over an EXPLICIT date range.
+
+    The index counterpart of get_fund_returns_between — use it to compare a fund
+    and its benchmark over exactly the same window. Both dates are ISO
+    YYYY-MM-DD and apply to every index in the list; each end snaps to the latest
+    close on/before the requested date, so read start_date/end_date in the
+    results for the window actually used.
+
+    Index levels are PRICE return (dividends excluded) while fund NAVs are TOTAL
+    return — see get_index_returns for what that means for comparisons.
+
+    Args:
+        tickers: A single ticker/alias or a list of them.
+        start_date: Window start, ISO YYYY-MM-DD.
+        end_date: Window end, ISO YYYY-MM-DD.
+    """
+    if not _index_available():
+        raise ValueError(
+            "Index data is not loaded on this server. Run "
+            "`python fetch_index_data.py` to generate ./data/index_*.parquet.")
+    try:
+        d_start = date.fromisoformat(start_date.strip())
+        d_end = date.fromisoformat(end_date.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"start_date and end_date must be ISO YYYY-MM-DD dates "
+            f"(got '{start_date}' and '{end_date}'): {exc}"
+        ) from None
+
+    if d_start >= d_end:
+        raise ValueError(
+            f"start_date ({d_start}) must be earlier than end_date ({d_end})."
+        )
+
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    return {
+        "period": "CUSTOM",
+        "start_date": str(d_start),
+        "end_date": str(d_end),
+        "period_end": "explicit-end-date",
+        "return_type": "price",
+        "results": _compute_index_returns(tickers, "CUSTOM",
+                                          window=(d_start, d_end)),
     }
 
 

@@ -151,6 +151,40 @@ instead of the local paths.
 
 Periods: `1W 2W 1M 3M 6M 9M 1Y 2Y 3Y 5Y YTD MTD SI`.
 
+### Benchmark indices
+
+Three more tools mirror the fund ones for market indices, so a fund and its
+benchmark can be compared over an identical window:
+
+- **list_indices()** — the available indices with ticker, name and history span.
+- **get_index_returns(tickers, period)** — mirrors `get_fund_returns`: same
+  period strings, same window conventions, same maths.
+- **get_index_returns_between(tickers, start_date, end_date)** — mirrors
+  `get_fund_returns_between`.
+
+Tickers accept friendly aliases (`NIFTY50`, `NIFTY100`, `NIFTY500`, `SENSEX`,
+`MIDCAP50`) or the raw Yahoo symbol (`^NSEI`). Five broad indices are covered —
+Nifty 50, Nifty 100, Nifty 500, BSE Sensex, Nifty Midcap 50 — with ~20 years of
+daily closes each. Sector indices are deliberately excluded: Yahoo returns only
+a handful of rows for them, so their returns would be silently wrong.
+
+**Index data is committed to this repo**, not fetched at runtime — see
+`data/index_history.parquet`. The server reads it as a plain local file, so
+there is no Yahoo dependency, no rate limit and no network call in the request
+path. Refresh it with:
+
+    pip install -r requirements-dev.txt
+    python fetch_index_data.py
+    git add data/index_history.parquet data/index_master.parquet
+
+The data is therefore only as current as the last deploy.
+
+> **Price return vs total return.** Index levels from Yahoo are **price
+> return** — they exclude dividends — while fund NAVs are **total return**.
+> Comparing them directly flatters the fund by roughly 1–1.5%/yr for Indian
+> equity. Every index response carries `return_type: "price"`; say so when
+> presenting a fund-vs-benchmark comparison.
+
 ## Conventions worth knowing
 
 - **Per-fund anchor.** Every window ends at each fund's own latest NAV, not the

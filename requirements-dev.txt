@@ -1,0 +1,9 @@
+# Development-only dependencies. NOT installed in the deployed image.
+#
+# yfinance is used solely by fetch_index_data.py to refresh the committed index
+# parquet. server.py never imports it — the index tools read the parquet from
+# disk — so it is deliberately kept out of requirements.txt to avoid pulling
+# yfinance and pandas into the App Service startup path.
+-r requirements.txt
+
+yfinance==1.5.2
