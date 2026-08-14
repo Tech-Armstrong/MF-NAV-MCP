@@ -1,0 +1,25 @@
+# Monthly input holdings CSVs — data, not source. The folder and its README are
+# kept so the layout is self-documenting on a fresh clone.
+input/*
+!input/README.md
+
+# Generated reports. These contain actual fund holdings; regenerate them by
+# re-running main.py rather than committing them.
+outputs/*
+!outputs/.gitkeep
+
+# Excel lock files, created while a workbook is open.
+~$*
+
+# Source reference data. Large binaries that change on their own schedule —
+# keep them out of git history and place them per the README.
+data/amfi/*.xlsx
+data/sector_files/*.xlsx
+
+# Generated from the files above by `main.py --rebuild-mapping`. Commit it
+# deliberately (git add -f) if you want to FREEZE a known-good mapping, as the
+# top-level README suggests; otherwise it is a build artefact.
+data/mappings/*.json
+
+__pycache__/
+*.pyc

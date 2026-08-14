@@ -1,0 +1,117 @@
+# Canonical fund names as they appear in the NAV parquet (scheme_master) that
+# the MCP server queries. The JSON export resolves each holdings fund name to
+# one of these and writes it as `nav_scheme_name`, so the MCP tool can join on
+# an exact string instead of fuzzy-matching at query time.
+#
+# Format:  <cap category>|<exact scheme_name from the parquet>
+# Lines starting with # and blank lines are ignored.
+#
+# REFRESH: when funds are added or renamed in the NAV data, update this file —
+# the export fails loudly on any holdings fund it cannot resolve, so a stale
+# list surfaces immediately rather than silently dropping a fund.
+
+Large Cap|ABSL Large Cap Fund-Growth
+Large Cap|Axis Large Cap Fund - Regular - Growth
+Large Cap|Bajaj Finserv Large Cap Fund - Regular - Growth
+Large Cap|Bandhan Large Cap Fund - Regular - Growth
+Large Cap|BOI Large Cap Fund Regular Growth
+Large Cap|Baroda BNP Paribas Large Cap Fund - Regular - Growth
+Large Cap|Canara Robeco Large Cap Fund - Regular - Growth
+Large Cap|DSP Large Cap Fund - Regular - Growth
+Large Cap|Edelweiss Large Cap Fund - Regular - Growth
+Large Cap|Franklin India Large Cap Fund-Growth
+Large Cap|Groww Largecap Fund - Regular - Growth
+Large Cap|HDFC Large Cap Fund - Growth - Regular
+Large Cap|HSBC Large Cap Fund - Regular Growth
+Large Cap|ICICI Pru Large Cap Fund - Growth
+Large Cap|ITI Large Cap Fund - Regular - Growth
+Large Cap|Invesco India Largecap Fund - Regular - Growth
+Large Cap|JM Large Cap Fund (Regular) - Growth
+Large Cap|Kotak Large Cap Fund - Growth
+Large Cap|LIC MF Large Cap Fund-Regular-Growth
+Large Cap|Mahindra Manulife Large Cap Fund - Regular - Growth
+Large Cap|Mirae Asset Large Cap Fund - Growth
+Large Cap|Motilal Oswal Large Cap Regular Growth
+Large Cap|Nippon India Large Cap Fund - Growth
+Large Cap|PGIM India Large Cap Fund - Growth
+Large Cap|Parag Parikh Large Cap Fund - Regular - Growth
+Large Cap|SBI Large Cap Fund - Regular Growth
+Large Cap|Samco Large Cap Fund - Regular - Growth
+Large Cap|Sundaram Large Cap Fund - Regular - Growth
+Large Cap|Tata Large Cap Fund - Regular - Growth
+Large Cap|Taurus Large Cap Fund - Regular - Growth
+Large Cap|UTI Large Cap Fund - Regular - Growth
+Large Cap|Union Largecap Fund - Regular - Growth
+Large Cap|WhiteOak Capital Large Cap Fund Regular Growth
+Large Cap|quant Large Cap Fund - Growth - Regular
+
+Mid Cap|ABSL Midcap Fund - Growth
+Mid Cap|Axis Midcap Fund - Regular - Growth
+Mid Cap|Bandhan Midcap Fund - Growth - Regular
+Mid Cap|BOI Mid Cap Fund - Regular Growth
+Mid Cap|Baroda BNP Paribas Mid Cap Fund - Regular - Growth
+Mid Cap|Canara Robeco Mid Cap Fund - Regular - Growth
+Mid Cap|DSP Midcap Fund - Regular - Growth
+Mid Cap|Edelweiss Mid Cap Fund - Regular - Growth
+Mid Cap|Franklin India Mid Cap Fund-Growth
+Mid Cap|HDFC Mid Cap Fund - Growth
+Mid Cap|HSBC Midcap Fund - Regular Growth
+Mid Cap|Helios Mid Cap Fund - Regular - Growth
+Mid Cap|ICICI Pru MidCap Fund - Growth
+Mid Cap|ITI Mid Cap Fund - Regular - Growth
+Mid Cap|Invesco India Midcap Fund - Regular - Growth
+Mid Cap|JM Midcap Fund (Regular) - Growth
+Mid Cap|Kotak Midcap Fund - Regular - Growth
+Mid Cap|LIC MF Mid Cap Fund-Regular-Growth
+Mid Cap|Mahindra Manulife Mid Cap Fund - Regular - Growth
+Mid Cap|Mirae Asset Midcap Fund - Regular - Growth
+Mid Cap|Motilal Oswal Midcap Fund - Regular - Growth
+Mid Cap|Nippon India Growth Mid Cap Fund-Growth
+Mid Cap|PGIM India Midcap Fund - Regular - Growth
+Mid Cap|SBI Midcap Fund - Regular - Growth
+Mid Cap|Samco Mid Cap Fund - Regular
+Mid Cap|Sundaram Mid Cap Fund Regular - Growth
+Mid Cap|Tata Mid Cap Fund Regular - Growth
+Mid Cap|Taurus Mid Cap Fund - Regular - Growth
+Mid Cap|TrustMF Mid Cap Fund - Regular-Growth
+Mid Cap|UTI Mid Cap Fund-Growth
+Mid Cap|Union Midcap Fund - Regular - Growth
+Mid Cap|WhiteOak Capital Mid Cap Fund Regular Growth
+Mid Cap|quant Mid Cap Fund - Growth - Regular
+
+Small Cap|Abakkus Small Cap Fund - Regular - Growth
+Small Cap|ABSL Small Cap Fund - Growth
+Small Cap|Axis Small Cap Fund - Regular - Growth
+Small Cap|Bajaj Finserv Small Cap Fund - Regular - Growth
+Small Cap|Bandhan Small Cap Fund - Regular Growth
+Small Cap|BOI Small Cap Fund Regular Growth
+Small Cap|Baroda BNP Paribas Small Cap Fund - Regular - Growth
+Small Cap|Canara Robeco Small Cap Fund - Regular - Growth
+Small Cap|DSP Small Cap Fund - Regular - Growth
+Small Cap|Edelweiss Small Cap Fund - Regular - Growth
+Small Cap|Franklin India Small Cap Fund-Growth
+Small Cap|Groww Small Cap Fund-Regular-Growth
+Small Cap|HDFC Small Cap Fund - Growth
+Small Cap|HSBC Small Cap Fund - Regular Growth
+Small Cap|Helios Small Cap Fund - Regular - Growth
+Small Cap|ICICI Pru Smallcap Fund - Growth
+Small Cap|ITI Small Cap Fund - Regular - Growth
+Small Cap|Invesco India Smallcap Fund - Regular - Growth
+Small Cap|JM Small Cap Fund (Regular) - Growth
+Small Cap|Kotak Small Cap Fund - Growth
+Small Cap|LIC MF Small Cap Fund-Regular-Growth
+Small Cap|Mahindra Manulife Small Cap Fund - Regular - Growth
+Small Cap|Mirae Asset Small Cap Fund - Regular - Growth
+Small Cap|Motilal Oswal Small Cap Fund - Regular - Growth
+Small Cap|Nippon India Small Cap Fund - Growth
+Small Cap|PGIM India Small Cap Fund - Regular - Growth
+Small Cap|Quantum Small Cap Fund - Regular Growth
+Small Cap|SBI Small Cap Fund - Regular - Growth
+Small Cap|Samco Small Cap Fund - Regular
+Small Cap|Sundaram Small Cap Fund Regular - Growth
+Small Cap|Tata Small Cap Fund-Regular-Growth
+Small Cap|The Wealth Co. Small Cap Fund - Regular-Growth
+Small Cap|TrustMF Small Cap Fund - Regular-Growth
+Small Cap|UTI Small Cap Fund - Regular - Growth
+Small Cap|Union Small Cap Fund - Regular - Growth
+Small Cap|quant Small Cap Fund - Growth - Regular

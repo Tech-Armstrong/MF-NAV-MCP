@@ -101,6 +101,14 @@ INDEX_HISTORY_PATH = os.environ.get(
 INDEX_MASTER_PATH = os.environ.get(
     "INDEX_MASTER_PATH", os.path.join(_HERE, "data", "index_master.parquet"))
 
+# Fund holdings profile: market-cap split, sector/industry breakdown and top
+# holdings per fund, produced monthly by holdings_enricher/ and keyed by the NAV
+# parquet's exact scheme_name so it joins cleanly with the returns tools.
+# Committed alongside the code for now; when more cap categories are added this
+# is expected to move to Azure Blob as parquet, like the NAV data.
+FUND_HOLDINGS_PATH = os.environ.get(
+    "FUND_HOLDINGS_PATH", os.path.join(_HERE, "data", "fund_holdings.json"))
+
 # Friendly names -> Yahoo tickers, so callers can say "NIFTY50" instead of
 # "^NSEI". Resolution is case-insensitive and strips spaces.
 _INDEX_ALIASES = {
@@ -615,6 +623,68 @@ def _compute_index_returns(tickers: list[str], period: str,
     return [results[t] for t in resolved]
 
 
+# ── fund holdings profile (market cap / sector exposure) ───────────────────────
+#
+# Loaded once at import into a plain dict — it is a few MB of JSON, read-only,
+# and every lookup is a dict hit, so there is nothing to gain from putting it in
+# DuckDB. Absent file is not fatal: the holdings tools report it and the rest of
+# the server works unchanged.
+
+def _load_fund_holdings() -> dict:
+    if not os.path.exists(FUND_HOLDINGS_PATH):
+        sys.stderr.write(
+            f"NAV MCP: fund holdings not found at {FUND_HOLDINGS_PATH}; "
+            "holdings tools will be unavailable. Generate it with "
+            "holdings_enricher/main.py --json.\n"
+        )
+        return {}
+    try:
+        import json as _json
+        with open(FUND_HOLDINGS_PATH, encoding="utf-8") as fh:
+            return _json.load(fh)
+    except Exception as exc:                       # malformed / unreadable
+        sys.stderr.write(f"NAV MCP: could not read fund holdings: {exc}\n")
+        return {}
+
+
+HOLDINGS = _load_fund_holdings()
+# scheme_name -> canonical key, for case/space-insensitive lookup.
+_HOLDINGS_INDEX = {
+    re.sub(r"\s+", " ", k).strip().lower(): k
+    for k in (HOLDINGS.get("funds") or {})
+}
+
+
+def _holdings_available() -> bool:
+    return bool(HOLDINGS.get("funds"))
+
+
+def _find_fund_holdings(fund_name: str) -> tuple[Optional[str], Optional[dict]]:
+    """
+    Resolve a fund name to its holdings entry.
+
+    Keys are the NAV parquet's exact scheme_name, so a code path that already
+    has a scheme_name (search_funds, get_fund_returns) hits directly. Falls back
+    to a case-insensitive match, then to a unique substring match so a caller
+    can pass a shortened name.
+    """
+    funds = HOLDINGS.get("funds") or {}
+    if fund_name in funds:
+        return fund_name, funds[fund_name]
+
+    norm = re.sub(r"\s+", " ", fund_name).strip().lower()
+    if norm in _HOLDINGS_INDEX:
+        key = _HOLDINGS_INDEX[norm]
+        return key, funds[key]
+
+    # Unique substring match — ambiguous input is an error, not a guess, so a
+    # partial name that hits several funds returns none of them.
+    hits = [orig for low, orig in _HOLDINGS_INDEX.items() if norm in low]
+    if len(hits) == 1:
+        return hits[0], funds[hits[0]]
+    return None, None
+
+
 # ── auth (optional; enabled when PUBLIC_BASE_URL is set) ────────────────────────
 
 def _build_auth():
@@ -1007,6 +1077,99 @@ def get_index_returns_between(
         "return_type": "price",
         "results": _compute_index_returns(tickers, "CUSTOM",
                                           window=(d_start, d_end)),
+    }
+
+
+@mcp.tool()
+def get_fund_holdings_profile(
+    fund_name: str,
+    include_sectors: bool = True,
+    include_top_holdings: bool = True,
+) -> dict:
+    """Market-cap split, sector exposure and top holdings for a fund.
+
+    Answers "how much of this fund is large cap?", "what is its exposure to
+    Banking?", "what does it actually hold?" — the portfolio composition
+    questions the returns tools cannot answer.
+
+    Pass the fund's scheme_name as returned by search_funds; the holdings data
+    is keyed by exactly that name, so it joins directly with the returns tools.
+    A case-insensitive or unique partial name also works.
+
+    Weights are percentages of the WHOLE portfolio and sum to the fund's equity
+    weight, NOT to 100 — the remainder is cash, repo and derivatives, which are
+    not equity holdings. `unmatched` lists holdings that could not be classified
+    against AMFI reference data, so "no exposure to X" can be told apart from
+    "held something unclassifiable".
+
+    Args:
+        fund_name: Fund scheme_name (from search_funds), or a unique partial.
+        include_sectors: Include the sector/industry breakdown (default True).
+        include_top_holdings: Include the largest holdings (default True).
+    """
+    if not _holdings_available():
+        raise ValueError(
+            "Fund holdings data is not loaded on this server. Generate it with "
+            "holdings_enricher/main.py --json and place it at "
+            f"{FUND_HOLDINGS_PATH}.")
+
+    key, prof = _find_fund_holdings(fund_name)
+    if not prof:
+        return {
+            "fund_name": fund_name, "found": False,
+            "error": f"No holdings data for '{fund_name}'. Holdings are "
+                     "currently available for Large/Mid/Small Cap equity funds "
+                     "only; use list_funds_with_holdings() to see which.",
+        }
+
+    out = {
+        "fund_name": key,
+        "found": True,
+        "as_of": prof.get("as_of"),
+        "cap_category": prof.get("cap_category"),
+        "equity_pct": prof.get("equity_pct"),
+        "holding_count": prof.get("holding_count"),
+        "market_cap": prof.get("market_cap"),
+        "note": "Weights are % of the whole portfolio and sum to equity_pct, "
+                "not to 100. The remainder is cash/repo/derivatives.",
+    }
+    if include_sectors:
+        # Drop the per-sector holdings arrays — sector weight and the industry
+        # split are what a caller almost always wants, and the full arrays
+        # duplicate top_holdings at several times the payload size.
+        out["sectors"] = {
+            name: {"weight_pct": s["weight_pct"], "industries": s["industries"]}
+            for name, s in (prof.get("sectors") or {}).items()
+        }
+    if include_top_holdings:
+        out["top_holdings"] = prof.get("top_holdings")
+    if prof.get("unmatched"):
+        out["unmatched"] = prof["unmatched"]
+        out["unmatched_pct"] = round(
+            sum(u.get("weight_pct") or 0 for u in prof["unmatched"]), 4)
+    return out
+
+
+@mcp.tool()
+def list_funds_with_holdings() -> dict:
+    """List the funds that have holdings/market-cap data available.
+
+    Holdings cover a subset of the funds in the NAV data — currently Large, Mid
+    and Small Cap equity funds. Names match the NAV scheme_name exactly, so they
+    can be passed straight to the returns tools.
+    """
+    if not _holdings_available():
+        return {"count": 0, "funds": [],
+                "error": "Fund holdings data is not loaded on this server."}
+    funds = HOLDINGS.get("funds") or {}
+    by_cap: dict = {}
+    for name, p in funds.items():
+        by_cap.setdefault(p.get("cap_category") or "Unknown", []).append(name)
+    return {
+        "count": len(funds),
+        "as_of": next(iter(funds.values())).get("as_of") if funds else None,
+        "generated_at": HOLDINGS.get("generated_at"),
+        "by_cap_category": {k: sorted(v) for k, v in sorted(by_cap.items())},
     }
 
 
