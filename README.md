@@ -162,22 +162,40 @@ benchmark can be compared over an identical window:
 - **get_index_returns_between(tickers, start_date, end_date)** — mirrors
   `get_fund_returns_between`.
 
-Tickers accept friendly aliases (`NIFTY50`, `NIFTY100`, `NIFTY500`, `SENSEX`,
-`MIDCAP50`) or the raw Yahoo symbol (`^NSEI`). Five broad indices are covered —
-Nifty 50, Nifty 100, Nifty 500, BSE Sensex, Nifty Midcap 50 — with ~20 years of
-daily closes each. Sector indices are deliberately excluded: Yahoo returns only
-a handful of rows for them, so their returns would be silently wrong.
+**109 indices** are covered, with daily closes back to **1990** — broad market
+(Nifty 50/100/200/500, Midcap, Smallcap, Microcap), sectoral (Bank, IT, Pharma,
+Auto, FMCG, Metal, Realty, Energy…), factor (Momentum, Quality, Value, Alpha,
+Low Volatility) and thematic (Defence, Railways, EV, Digital, Tourism).
+
+Tickers are derived from the index name — `Nifty Midcap 150` → `NIFTY_MIDCAP_150`
+— and `list_indices()` advertises the full set. Common shorthands are aliased
+(`NIFTY50`, `NIFTY500`, `MIDCAP150`, `BANKNIFTY`, `NIFTYIT`, `SMALLCAP250`,
+`VIX`, …); any exact ticker works without an alias. The source is NSE-only, so
+there is **no BSE Sensex** series.
 
 **Index data is committed to this repo**, not fetched at runtime — see
 `data/index_history.parquet`. The server reads it as a plain local file, so
-there is no Yahoo dependency, no rate limit and no network call in the request
-path. Refresh it with:
+there is no network call in the request path. Two scripts maintain it, both run
+from the project root:
 
     pip install -r requirements-dev.txt
-    python fetch_index_data.py
+
+    # Full rebuild from the Weekly Market Pulse Tracker workbook (put it in Index/)
+    python Index/parse_index_xlsx.py
+
+    # Daily top-up from the NSE Index_close_<date>.csv export (put it in Index/)
+    python Index/append_daily_close.py
+
     git add data/index_history.parquet data/index_master.parquet
 
-The data is therefore only as current as the last deploy.
+The daily script only updates indices already present, is safe to re-run (it
+skips rows it already has), and writes atomically. The source workbook and CSV
+are gitignored — only their parquet output is committed, so the data is as
+current as the last deploy.
+
+`Index/fetch_index_data.py` is the earlier Yahoo Finance fetcher, kept for
+ad-hoc use. It is no longer the source of the committed parquet: Yahoo carried
+5 indices from 2007, and served the sector indices too sparsely to trust.
 
 > **Price return vs total return.** Index levels from Yahoo are **price
 > return** — they exclude dividends — while fund NAVs are **total return**.

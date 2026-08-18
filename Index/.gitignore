@@ -1,0 +1,14 @@
+# Source data drops — inputs, not source code.
+#
+# The Weekly Market Pulse Tracker workbook (~10MB) and the daily NSE
+# Index_close_*.csv arrive on their own schedule and would bloat git history
+# quickly. What gets committed is their OUTPUT: data/index_*.parquet, built by
+# parse_index_xlsx.py and kept current by append_daily_close.py.
+#
+# Keep the latest drop of each here locally; the scripts pick the newest file
+# automatically.
+*.xlsx
+*.csv
+
+# Excel lock files, created while a workbook is open.
+~$*

@@ -91,7 +91,7 @@ SCHEME_MASTER_PATH = os.environ.get("SCHEME_MASTER_PATH", "./data/scheme_master.
 AZURE_CONN = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 
 # Index benchmark parquet. Unlike the NAV paths these default to files COMMITTED
-# to the repo (see fetch_index_data.py), so they resolve relative to this file
+# to the repo (see Index/fetch_index_data.py), so they resolve relative to this file
 # rather than the process working directory — MCP clients spawn the server from
 # arbitrary directories. Never read from Azure: the data is small and versioned
 # with the code.
@@ -109,17 +109,43 @@ INDEX_MASTER_PATH = os.environ.get(
 FUND_HOLDINGS_PATH = os.environ.get(
     "FUND_HOLDINGS_PATH", os.path.join(_HERE, "data", "fund_holdings.json"))
 
-# Friendly names -> Yahoo tickers, so callers can say "NIFTY50" instead of
-# "^NSEI". Resolution is case-insensitive and strips spaces.
+# Friendly names -> tickers, so callers can say "NIFTY50" instead of
+# "NIFTY_50". Resolution is case-insensitive and strips spaces/underscores.
+#
+# Tickers are derived from the index names in the source workbook (see
+# Index/parse_index_xlsx.py), so they are all NIFTY_*-shaped. Only shorthands
+# that a caller would plausibly type need an entry here — list_indices()
+# advertises the full set, and any exact ticker works without an alias.
+#
+# NOTE: the workbook is NSE-only, so there is no BSE Sensex series. SENSEX is
+# deliberately absent rather than aliased to a Nifty index, which would answer
+# a different question than the one asked.
 _INDEX_ALIASES = {
-    "NIFTY": "^NSEI",
-    "NIFTY50": "^NSEI",
-    "NIFTY100": "^CNX100",
-    "NIFTY500": "^CRSLDX",
-    "SENSEX": "^BSESN",
-    "BSESENSEX": "^BSESN",
-    "NIFTYMIDCAP50": "^NSMIDCP",
-    "MIDCAP50": "^NSMIDCP",
+    "NIFTY": "NIFTY_50",
+    "NIFTY50": "NIFTY_50",
+    "NIFTY100": "NIFTY_100",
+    "NIFTY200": "NIFTY_200",
+    "NIFTY500": "NIFTY_500",
+    "NIFTYNEXT50": "NIFTY_NEXT_50",
+    "NEXT50": "NIFTY_NEXT_50",
+    "NIFTYMIDCAP50": "NIFTY_MIDCAP_50",
+    "MIDCAP50": "NIFTY_MIDCAP_50",
+    "NIFTYMIDCAP100": "NIFTY_MIDCAP_100",
+    "MIDCAP100": "NIFTY_MIDCAP_100",
+    "NIFTYMIDCAP150": "NIFTY_MIDCAP_150",
+    "MIDCAP150": "NIFTY_MIDCAP_150",
+    "NIFTYSMALLCAP100": "NIFTY_SMALLCAP_100",
+    "SMALLCAP100": "NIFTY_SMALLCAP_100",
+    "NIFTYSMALLCAP250": "NIFTY_SMALLCAP_250",
+    "SMALLCAP250": "NIFTY_SMALLCAP_250",
+    "BANKNIFTY": "NIFTY_BANK",
+    "NIFTYBANK": "NIFTY_BANK",
+    "NIFTYIT": "NIFTY_IT",
+    "NIFTYPHARMA": "NIFTY_PHARMA",
+    "NIFTYAUTO": "NIFTY_AUTO",
+    "NIFTYFMCG": "NIFTY_FMCG",
+    "VIX": "INDIA_VIX",
+    "INDIAVIX": "INDIA_VIX",
 }
 
 _VALID_PERIODS = {
@@ -266,7 +292,7 @@ def _build_connection() -> duckdb.DuckDBPyConnection:
         sys.stderr.write(
             "NAV MCP: index parquet not found at "
             f"{INDEX_HISTORY_PATH} / {INDEX_MASTER_PATH}; index tools will be "
-            "unavailable. Run `python fetch_index_data.py` to create them.\n"
+            "unavailable. Run `python Index/fetch_index_data.py` to create them.\n"
         )
     return con
 
@@ -489,8 +515,8 @@ def _compute_returns(scheme_codes: list[str], period: str,
 # ── core: point-to-point returns for indices ───────────────────────────────────
 
 def _resolve_ticker(t: str) -> str:
-    """'nifty 50' / 'NIFTY50' / '^NSEI' -> '^NSEI'. Unknown values pass through
-    unchanged so an explicit ticker still works even if it is not aliased."""
+    """'nifty 50' / 'NIFTY50' / 'Nifty_50' -> 'NIFTY_50'. Unknown values pass
+    through unchanged so an exact ticker works even if it is not aliased."""
     key = re.sub(r"[\s_-]+", "", t.strip().upper())
     return _INDEX_ALIASES.get(key, t.strip())
 
@@ -967,7 +993,7 @@ def list_indices() -> dict:
     if not _index_available():
         return {"indices": [], "count": 0,
                 "error": "Index data is not loaded on this server. Run "
-                         "`python fetch_index_data.py` to generate it."}
+                         "`python Index/fetch_index_data.py` to generate it."}
     rows = CON.execute("""
         SELECT m.ticker, m.index_name,
                MIN(h.nav_date), MAX(h.nav_date), COUNT(*)
@@ -1016,7 +1042,7 @@ def get_index_returns(tickers: Union[str, list[str]], period: str) -> dict:
     if not _index_available():
         raise ValueError(
             "Index data is not loaded on this server. Run "
-            "`python fetch_index_data.py` to generate ./data/index_*.parquet.")
+            "`python Index/fetch_index_data.py` to generate ./data/index_*.parquet.")
     if isinstance(tickers, str):
         tickers = [tickers]
     return {
@@ -1052,7 +1078,7 @@ def get_index_returns_between(
     if not _index_available():
         raise ValueError(
             "Index data is not loaded on this server. Run "
-            "`python fetch_index_data.py` to generate ./data/index_*.parquet.")
+            "`python Index/fetch_index_data.py` to generate ./data/index_*.parquet.")
     try:
         d_start = date.fromisoformat(start_date.strip())
         d_end = date.fromisoformat(end_date.strip())

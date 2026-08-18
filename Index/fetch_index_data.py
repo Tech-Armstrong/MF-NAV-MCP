@@ -1,11 +1,14 @@
 """
-fetch_index_data.py  —  download Indian index history from Yahoo Finance
-=========================================================================
+Index/fetch_index_data.py  —  download Indian index history from Yahoo Finance
+==============================================================================
 
 Writes two parquet files that server.py reads exactly like the fund data:
 
     ./data/index_history.parquet   ticker, nav_date, close
     ./data/index_master.parquet    ticker, index_name
+
+NOTE: those paths are relative to the CURRENT DIRECTORY, so run this from the
+project root (the directory containing server.py), not from Index/.
 
 The schema deliberately mirrors nav_history / scheme_master (a code column, a
 date column, a level column) so the index tools reuse _compute_returns rather
@@ -17,9 +20,9 @@ committing it means the server has no runtime dependency on Yahoo — no rate
 limits, no outages, no yfinance in the deployed image.
 
 Re-run this to refresh (the series only extend forward, so it is safe to re-run
-any time) and commit the result:
+any time) and commit the result — from the project root:
 
-    python fetch_index_data.py
+    python Index/fetch_index_data.py
     git add data/index_history.parquet data/index_master.parquet
 
 Requires yfinance, which is a DEV dependency only — see requirements-dev.txt.
