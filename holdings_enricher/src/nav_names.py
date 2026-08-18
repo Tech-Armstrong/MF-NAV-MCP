@@ -53,16 +53,25 @@ AMC_ALIASES = {
     "aditya birla sun life": "absl",
     "aditya birla": "absl",
     "bank of india": "boi",
+    # The NAV data uses BOTH forms: "ICICI Pru" for the equity categories
+    # (Flexicap, Large Cap, MidCap, Smallcap) and "ICICI Prudential" elsewhere
+    # (Equity & Debt, Balanced Advantage, index funds). Collapsing to the short
+    # form makes either side match whichever the other happens to use.
+    "icici prudential": "icici pru",
     "the wealth company": "the wealth co",
     "trustmf": "trust mf",
 }
 
 # Plan / option / structural words that carry no identity. Removed from both
 # sides before comparison.
+#
+# NOTE these run AFTER punctuation has already been collapsed to spaces, so the
+# patterns must match the bare tokens — "(G)" has become " g " by this point,
+# not "(g)". Matching on the parenthesised form silently left a stray "g" token
+# behind, which cost real points on every "... Fund (G)" name.
 _NOISE = [
-    r"\(g\)", r"\(idcw\)", r"\(regular\)", r"\(direct\)",
-    r"\bregular\b", r"\bdirect\b", r"\bgrowth\b", r"\bidcw\b",
-    r"\bplan\b", r"\boption\b", r"\bfund\b",
+    r"\bg\b", r"\bidcw\b", r"\bregular\b", r"\bdirect\b",
+    r"\bgrowth\b", r"\bplan\b", r"\boption\b", r"\bfund\b",
 ]
 
 

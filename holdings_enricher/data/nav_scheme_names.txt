@@ -115,3 +115,35 @@ Small Cap|TrustMF Small Cap Fund - Regular-Growth
 Small Cap|UTI Small Cap Fund - Regular - Growth
 Small Cap|Union Small Cap Fund - Regular - Growth
 Small Cap|quant Small Cap Fund - Growth - Regular
+
+# Aggressive Hybrid — all 29 taken verbatim from scheme_master in Azure Blob
+# (category = 'AGGRESSIVE HYBRID'), not typed by hand.
+Aggressive Hybrid|Aditya Birla Sun Life Equity Hybrid '95 Fund - Regular - Growth
+Aggressive Hybrid|Axis Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|BOI Mid & Small Cap Equity & Debt Fund - Regular - Growth
+Aggressive Hybrid|Bandhan Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Canara Robeco Equity Hybrid Fund - Regular - Growth
+Aggressive Hybrid|DSP Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Edelweiss Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Franklin India Aggressive Hybrid Fund - Growth
+Aggressive Hybrid|Groww Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|HDFC Hybrid Equity Fund - Growth
+Aggressive Hybrid|HSBC Aggressive Hybrid Fund - Regular Growth
+Aggressive Hybrid|ICICI Prudential Equity & Debt Fund - Growth
+Aggressive Hybrid|Invesco India Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|JM Aggressive Hybrid Fund (Regular) - Growth
+Aggressive Hybrid|Kotak Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|LIC MF Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Mahindra Manulife Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Mirae Asset Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Navi Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Nippon India Aggressive Hybrid Fund - Growth
+Aggressive Hybrid|PGIM India Aggressive Hybrid Equity Fund - Growth
+Aggressive Hybrid|SBI Equity Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Shriram Aggressive Hybrid Fund - Regular Growth
+Aggressive Hybrid|Sundaram Aggressive Hybrid Fund - Growth
+Aggressive Hybrid|Tata Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|UTI Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Union Aggressive Hybrid Fund - Regular - Growth
+Aggressive Hybrid|WhiteOak Capital Aggressive Hybrid Fund Regular Growth
+Aggressive Hybrid|quant Aggressive Hybrid Fund - Growth - Regular
