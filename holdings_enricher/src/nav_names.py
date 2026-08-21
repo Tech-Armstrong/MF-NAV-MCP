@@ -69,15 +69,76 @@ AMC_ALIASES = {
 # patterns must match the bare tokens — "(G)" has become " g " by this point,
 # not "(g)". Matching on the parenthesised form silently left a stray "g" token
 # behind, which cost real points on every "... Fund (G)" name.
+#
+# The Advisorkhoj API spells IDCW out in SEBI's full legal form —
+# "Income Distribution Cum Capital Withdrawal Option (IDCW)" — which is six
+# tokens of pure noise. Left in, it swamped the comparison: an SBI fund scored
+# 52 against its own NAV name and the export refused it. The long form is
+# stripped BEFORE the short patterns so the phrase goes as a unit.
 _NOISE = [
+    # Longest first: "payout of ..." contains "income distribution ...", so the
+    # inner phrase must not strip first and strand a bare "payout of".
+    #
+    # "cumcapital" (no space) is not a typo here — Kotak's API name really does
+    # run the words together, and it scored 46 against its own NAV name.
+    # "re investment" is the same word: the API writes "Re-Investment", and the
+    # hyphen has already become a space by the time these patterns run.
+    r"\bre ?investment of income distribution cum ?capital withdrawal\b",
+    r"\bpayout of income distribution cum ?capital withdrawal\b",
+    r"\bincome distribution cum ?capital withdrawal\b",
+    # Payout/reinvestment qualifiers, which the API appends in several spellings
+    # — "(Payout/Reinvestment)", "(Payout & Reinvestment)", "Payout of IDCW".
+    r"\bpayout\b", r"\bre ?investment\b", r"\bdividend\b",
+    # IDCW payout frequencies — plan detail, not fund identity.
+    r"\bannual\b", r"\bquarterly\b", r"\bmonthly\b", r"\bhalf yearly\b",
+    r"\bdaily\b", r"\bweekly\b", r"\bfortnightly\b",
     r"\bg\b", r"\bidcw\b", r"\bregular\b", r"\bdirect\b",
+    # "standard" and "bonus" are plan names (Kotak's legacy Standard Plan,
+    # Nippon's Bonus Option), not fund identity.
     r"\bgrowth\b", r"\bplan\b", r"\boption\b", r"\bfund\b",
+    r"\bstandard\b", r"\bbonus\b", r"\bcumulative\b",
+    # Conjunctions stranded by the removals above ("... (Payout & Reinvestment)"
+    # leaves a bare "and"; "Payout of IDCW" leaves "of"). Harmless to the match
+    # but they make the normalised form confusing to read when debugging.
+    r"\band\b", r"\bof\b",
 ]
+
+# Parenthesised asides that identify a renamed scheme rather than a plan, e.g.
+# "ICICI Prudential Large Cap Fund (erstwhile Bluechip Fund)". The NAV data
+# carries only the current name, so the aside must go — but as a whole phrase,
+# since "bluechip" would otherwise linger and drag the score down.
+_ERSTWHILE = re.compile(r"\(\s*erstwhile[^)]*\)", re.I)
+
+
+def _same_amc(a: str, b: str) -> bool:
+    """
+    Do two normalised fund names belong to the same AMC?
+
+    Guards the fuzzy branch. The AMC is the leading token(s), so comparing the
+    first token catches the dangerous near-misses (hsbc/hdfc, iti/icici) that a
+    whole-string ratio smooths over. Multi-word AMCs ("canara robeco", "white
+    oak capital") share their first token with themselves, so a first-token
+    match is sufficient; where the first token is a generic prefix the second
+    token settles it.
+    """
+    ta, tb = a.split(), b.split()
+    if not ta or not tb:
+        return False
+    if ta[0] != tb[0]:
+        return False
+    # "360 one" / "bank of india" style: a bare number or a short generic first
+    # token is not distinctive on its own, so require the second token too.
+    if (ta[0].isdigit() or len(ta[0]) <= 3) and len(ta) > 1 and len(tb) > 1:
+        return ta[1] == tb[1]
+    return True
 
 
 def normalize(name: str) -> str:
     """Lowercase, strip punctuation and plan/option noise, expand AMC aliases."""
     s = name.lower().strip()
+    # Drop "(erstwhile …)" while the brackets survive — once punctuation is
+    # collapsed below there is nothing left to delimit the aside.
+    s = _ERSTWHILE.sub(" ", s)
     s = s.replace("&", "and")
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -92,10 +153,16 @@ def normalize(name: str) -> str:
     for pat in _NOISE:
         s = re.sub(pat, " ", s)
 
-    # Collapse cap-size spellings so "Mid Cap" == "Midcap".
+    # Collapse cap-size spellings so "Mid Cap" == "Midcap". Both sources use
+    # both spellings freely, and on a short name the difference is worth ~20
+    # points — "Sundaram Flexi Cap" vs "Sundaram Flexicap" scored 80 against a
+    # floor of 85, i.e. a fund silently lost to a missing space.
     s = re.sub(r"\blarge\s*cap\b", "largecap", s)
     s = re.sub(r"\bmid\s*cap\b", "midcap", s)
     s = re.sub(r"\bsmall\s*cap\b", "smallcap", s)
+    s = re.sub(r"\bflexi\s*cap\b", "flexicap", s)
+    s = re.sub(r"\bmulti\s*cap\b", "multicap", s)
+    s = re.sub(r"\bmicro\s*cap\b", "microcap", s)
 
     return re.sub(r"\s+", " ", s).strip()
 
@@ -158,8 +225,18 @@ class NavNameResolver:
         best = process.extractOne(n, list(pool.keys()),
                                   scorer=fuzz.token_sort_ratio)
         if best and best[1] >= self.fuzzy_floor:
-            return {"nav_scheme_name": pool[best[0]],
-                    "method": "fuzzy", "score": int(round(best[1]))}
+            # The AMC token must agree. Fund names differ mostly in their tail
+            # ("... Tax Saver Fund"), so a high token_sort_ratio says little
+            # about WHOSE fund it is: "HSBC ELSS Tax Saver" scored 89 against
+            # "HDFC ELSS Tax Saver" — one character apart, different AMCs, and
+            # HSBC's is simply absent from the NAV data. Attributing one AMC's
+            # holdings to another is the worst failure this module can produce,
+            # so an AMC mismatch is refused outright rather than scored.
+            if _same_amc(n, best[0]):
+                return {"nav_scheme_name": pool[best[0]],
+                        "method": "fuzzy", "score": int(round(best[1]))}
+            return {"nav_scheme_name": None, "method": "unresolved",
+                    "score": int(round(best[1]))}
 
         return {"nav_scheme_name": None, "method": "unresolved",
                 "score": int(round(best[1])) if best else 0}

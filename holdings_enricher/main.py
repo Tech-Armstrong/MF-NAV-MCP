@@ -2,30 +2,46 @@
 main.py  —  Holdings Enricher CLI
 ==================================
 
+Pulls mutual-fund holdings from the Advisorkhoj API and enriches them with AMFI
+sector, industry and market-cap data.
+
 Usage
 -----
-# Enrich a single holdings file:
-    python main.py --input "Large Cap Holdings.csv" --cap "Large Cap"
+# One category for one month:
+    python main.py --category "Equity: Large Cap" --cap "Large Cap" \
+        --year 2026 --month JUNE --json
 
-# Enrich multiple files at once:
-    python main.py \
-        --input "Large Cap Holdings.csv" --cap "Large Cap" \
-        --input "Mid Cap Holdings.csv"   --cap "Mid Cap"   \
-        --input "Small Cap holdings.csv" --cap "Small Cap"
+# Several categories in one run (combined output):
+    python main.py --year 2026 --month JUNE --json \
+        --category "Equity: Large Cap" --cap "Large Cap" \
+        --category "Equity: Mid Cap"   --cap "Mid Cap"   \
+        --category "Equity: Small Cap" --cap "Small Cap"
 
-# Rebuild isin_mapping.json from source files (run after updating AMFI / sector files):
+# Specific funds only (skips the category listing):
+    python main.py --cap "Large Cap" --year 2026 --month JUNE \
+        --fund "Axis Large Cap Fund" --fund "SBI Large Cap Fund"
+
+# Discover what the API offers:
+    python main.py --list-categories
+    python main.py --list-funds "Equity: Large Cap"
+
+# Rebuild isin_mapping.json from source AMFI / sector files:
     python main.py --rebuild-mapping
+
+The API key is read from API_KEY in the project .env (or --api-key).
 
 Optional flags
 --------------
     --output PATH       custom output xlsx path  (default: outputs/Holdings_Enriched_<timestamp>.xlsx)
     --fuzzy-cutoff N    minimum fuzzy score (default 88)
     --tolerance N       fund weight sum tolerance in ±pp (default 2.0)
-    --rebuild-mapping   rebuild isin_mapping.json before enriching
+    --api-delay S       pause between per-fund API calls (default 0.3s)
+    --allow-partial     continue even if some funds have no published portfolio
 """
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -40,7 +56,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.builder  import build_isin_mapping
 from src.matcher  import Matcher
-from src.parser   import parse_holdings_csv
+from src.api_client import AdvisorkhojClient, AdvisorkhojError, MONTHS
+from src.api_source import fetch_category, DEFAULT_DELAY
 from src.enricher import enrich, match_summary
 from src.validator import validate_weights, validation_rows
 from src.writer   import write_output
@@ -48,6 +65,28 @@ from src.json_export import write_fund_profile_json
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+def load_dotenv():
+    """
+    Load the project .env so API_KEY is available.
+
+    The enricher lives one level below the repo root, and the .env sits beside
+    the repo (with AZURE_STORAGE_CONNECTION_STRING), so check both. Existing
+    environment variables win — an explicitly exported key should not be
+    overridden by a stale file.
+    """
+    for candidate in (PROJECT_ROOT.parent / ".env",
+                      PROJECT_ROOT.parent.parent / ".env",
+                      PROJECT_ROOT / ".env"):
+        if not candidate.exists():
+            continue
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
 
 def load_mapping(rebuild: bool = False):
     """Load (or build) isin_mapping.json. Returns (isin_dict, amfi_by_norm)."""
@@ -79,8 +118,9 @@ def build_alias_report(enriched_rows):
         s = row["Stock"]
         if s not in seen:
             seen[s] = row
-    priority = {"no-match": 0, "manual-none": 1, "fuzzy-high": 2,
-                "manual-alias": 3, "exact-norm": 4}
+    priority = {"no-match": 0, "manual-none": 1, "ambiguous": 2, "fuzzy-high": 3,
+                "isin-stale": 4, "manual-alias": 5, "prefix": 6,
+                "exact-norm": 7, "isin-exact": 8}
     return sorted(seen.values(),
                   key=lambda r: (priority.get(r["Match Method"], 99), r["Stock"]))
 
@@ -89,21 +129,75 @@ def build_alias_report(enriched_rows):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Enrich mutual fund holdings CSVs with AMFI sector/industry/market-cap data."
+        description="Pull mutual fund holdings from the Advisorkhoj API and "
+                    "enrich them with AMFI sector/industry/market-cap data.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--input", "-i",
+        "--category",
         action="append",
-        metavar="CSV_PATH",
-        help="Path to a holdings CSV file. Repeat for multiple files.",
+        metavar="NAME",
+        help='API category to pull, e.g. "Equity: Large Cap". Repeat for '
+             "several. Use --list-categories to see the options.",
     )
     parser.add_argument(
         "--cap", "-c",
         action="append",
         metavar="LABEL",
         default=[],
-        help='Cap category label for each --input file (e.g. "Large Cap"). '
-             'Must appear in the same order as --input.',
+        help='Cap category label for each --category (e.g. "Large Cap"). Must '
+             "appear in the same order. This is stamped on every row, becomes "
+             "cap_category in the JSON, and scopes NAV name resolution — so it "
+             "must match a category in data/nav_scheme_names.txt.",
+    )
+    parser.add_argument(
+        "--fund",
+        action="append",
+        metavar="NAME",
+        help="Pull specific fund(s) by their API common name instead of a whole "
+             "category. Repeat for several. Uses the first --cap as the label.",
+    )
+    parser.add_argument(
+        "--year",
+        type=int,
+        metavar="YYYY",
+        help="Portfolio year, e.g. 2026.",
+    )
+    parser.add_argument(
+        "--month",
+        metavar="MONTH",
+        help=f"Portfolio month: {', '.join(m.title() for m in MONTHS)}.",
+    )
+    parser.add_argument(
+        "--api-key",
+        metavar="KEY",
+        default=None,
+        help="Advisorkhoj API key. Defaults to API_KEY from the project .env.",
+    )
+    parser.add_argument(
+        "--api-delay",
+        type=float,
+        default=DEFAULT_DELAY,
+        metavar="SECONDS",
+        help=f"Pause between per-fund API calls (default {DEFAULT_DELAY}s).",
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Continue when some funds have no published portfolio for the "
+             "month. Off by default: a partial month silently produces a "
+             "half-empty dataset that looks complete.",
+    )
+    parser.add_argument(
+        "--list-categories",
+        action="store_true",
+        help="Print the API's categories and exit.",
+    )
+    parser.add_argument(
+        "--list-funds",
+        metavar="CATEGORY",
+        default=None,
+        help="Print the funds in one API category and exit.",
     )
     parser.add_argument(
         "--output", "-o",
@@ -144,45 +238,119 @@ def main():
         default=10,
         help="How many top holdings to include per fund in the JSON (default 10).",
     )
+    parser.add_argument(
+        "--skip-unresolved",
+        action="store_true",
+        help="Write the JSON even if some funds have no match in "
+             "data/nav_scheme_names.txt, warning instead of failing. Use when "
+             "the API lists a fund your NAV data does not carry yet (a new "
+             "launch). Those funds are OMITTED from the JSON, so prefer adding "
+             "them to nav_scheme_names.txt when they do exist.",
+    )
 
     args = parser.parse_args()
+    load_dotenv()
+
+    # ── Discovery modes (no enrichment) ────────────────────────────────────
+    if args.list_categories:
+        client = AdvisorkhojClient(args.api_key)
+        for c in client.get_categories():
+            print(c)
+        return
+
+    if args.list_funds:
+        client = AdvisorkhojClient(args.api_key)
+        for f in client.get_schemes_in_category(args.list_funds):
+            print(f)
+        return
 
     # ── Rebuild mapping if requested (can run standalone) ──────────────────
-    if args.rebuild_mapping and not args.input:
+    if args.rebuild_mapping and not (args.category or args.fund):
         load_mapping(rebuild=True)
         print("[main] Mapping rebuilt. Exiting.")
         return
 
     # ── Validate inputs ────────────────────────────────────────────────────
-    if not args.input:
-        parser.error("Provide at least one --input CSV file.")
+    if not args.category and not args.fund:
+        parser.error("Provide --category (or --fund), plus --year and --month. "
+                     "See --list-categories.")
+    if not args.year or not args.month:
+        parser.error("--year and --month are required "
+                     '(e.g. --year 2026 --month JUNE).')
 
-    # Pad cap labels with empty string if fewer provided than files
-    cap_labels = args.cap + [""] * (len(args.input) - len(args.cap))
+    # Pad cap labels with empty string if fewer provided than categories
+    targets = args.category or ["(explicit funds)"]
+    cap_labels = args.cap + [""] * (len(targets) - len(args.cap))
 
     # ── Load mapping + build matcher ───────────────────────────────────────
     isin_dict, amfi_by_norm = load_mapping(rebuild=args.rebuild_mapping)
     matcher = Matcher(amfi_by_norm, fuzzy_cutoff=args.fuzzy_cutoff,
                       known_isins=set(isin_dict))
 
-    # ── Parse + enrich all input files ────────────────────────────────────
+    # ── Pull from the API + enrich ─────────────────────────────────────────
+    try:
+        client = AdvisorkhojClient(args.api_key)
+    except AdvisorkhojError as e:
+        print(f"[main] {e}")
+        sys.exit(1)
+
     all_enriched = []
     all_non_equity = []
-    for csv_path, cap_label in zip(args.input, cap_labels):
-        print(f"[main] Parsing  → {csv_path}  (cap: '{cap_label}')")
-        records, non_equity = parse_holdings_csv(
-            csv_path, cap_category=cap_label, return_non_equity=True
-        )
+    reports = []
+
+    for target, cap_label in zip(targets, cap_labels):
+        try:
+            records, non_equity, report = fetch_category(
+                client,
+                category=target,
+                year=args.year,
+                month=args.month,
+                cap_category=cap_label,
+                funds=args.fund if args.fund else None,
+                delay=args.api_delay,
+            )
+        except AdvisorkhojError as e:
+            print(f"[main] API error for '{target}': {e}")
+            sys.exit(1)
+
+        reports.append(report)
         all_non_equity.extend(non_equity)
         enriched = enrich(records, isin_dict, matcher)
         all_enriched.extend(enriched)
+
         stats = match_summary(enriched)
         print(f"        {stats['matched']}/{stats['total']} matched "
               f"({stats['match_pct']}%) | by method: {stats['by_method']}")
 
+        # Only the explicit-fund path ignores the category loop.
+        if args.fund:
+            break
+
+    # ── Report funds with no published portfolio ───────────────────────────
+    missing = [(r["category"], f) for r in reports for f in r["empty"]]
+    failed  = [(r["category"], f) for r in reports for f in r["failed"]]
+
+    if failed:
+        print(f"\n[main] ⚠️  {len(failed)} fund(s) errored:")
+        for cat, f in failed[:10]:
+            print(f"        {f['fund']} — {f['error']}")
+
+    if missing:
+        print(f"\n[main] ⚠️  {len(missing)} fund(s) have no portfolio published "
+              f"for {args.month} {args.year}:")
+        for cat, name in missing[:10]:
+            print(f"        {name}")
+        if len(missing) > 10:
+            print(f"        … and {len(missing) - 10} more")
+        if not args.allow_partial:
+            print("\n[main] Refusing to write a partial dataset. Either pick a "
+                  "month that is fully published, or pass --allow-partial to "
+                  "write what is available.")
+            sys.exit(2)
+
     if not all_enriched:
-        print("[main] No equity rows found. Check your input files.")
-        return
+        print("[main] No equity rows returned. Check the category, year and month.")
+        sys.exit(2)
 
     # ── Overall stats ──────────────────────────────────────────────────────
     overall = match_summary(all_enriched)
@@ -224,7 +392,8 @@ def main():
     # enriched rows, so the two can never disagree.
     if args.json is not None:
         json_path = Path(args.json) if args.json else out_path.with_suffix(".json")
-        write_fund_profile_json(all_enriched, json_path, top_n=args.json_top_n)
+        write_fund_profile_json(all_enriched, json_path, top_n=args.json_top_n,
+                                strict=not args.skip_unresolved)
 
 
 if __name__ == "__main__":

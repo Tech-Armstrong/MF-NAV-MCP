@@ -30,7 +30,7 @@ def validate_weights(
     ----------
     enriched   : list of enriched holding dicts (output of enricher.enrich)
     tolerance  : allowed deviation from 100 (default ±2 pp)
-    non_equity : non-equity rows from the parser (cash / repo / derivatives /
+    non_equity : non-equity rows from the API source (cash / repo / derivatives /
                  debt). Required to reconcile against a true 100%; if omitted,
                  the check falls back to equity-only and will over-flag.
 

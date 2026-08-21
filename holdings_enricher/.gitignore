@@ -1,4 +1,5 @@
-# Monthly input holdings CSVs — data, not source. The folder and its README are
+# Legacy CSV holdings — no longer read by the pipeline (API is the source now).
+# The folder and its README are
 # kept so the layout is self-documenting on a fresh clone.
 input/*
 !input/README.md

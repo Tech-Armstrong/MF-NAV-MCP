@@ -15,6 +15,12 @@ from typing import List, Dict, Optional
 
 from src.matcher import Matcher
 
+# Match-method labels specific to the API path (the name-based ones live in
+# matcher.py). Kept distinct so the alias report shows at a glance how much of
+# the enrichment came free from the API versus needed a name lookup.
+METHOD_ISIN          = "isin-exact"      # API ISIN hit the AMFI mapping directly
+METHOD_ISIN_FALLBACK = "isin-stale"      # API ISIN missed; recovered by name
+
 
 def enrich(
     records: List[Dict],
@@ -26,7 +32,7 @@ def enrich(
 
     Parameters
     ----------
-    records      : output of parser.parse_holdings_csv()
+    records      : output of api_source.to_records()
     isin_mapping : loaded from isin_mapping.json
     matcher      : Matcher instance (contains alias rules + fuzzy index)
 
@@ -40,7 +46,27 @@ def enrich(
 
     for rec in records:
         stock = rec["stock"]
-        isin, method, score = matcher.match(stock)
+
+        # ── ISIN first, name second ──────────────────────────────────────
+        # The API states an ISIN per holding, so prefer the direct lookup:
+        # it is exact, and it sidesteps instrument strings the name matcher
+        # cannot parse ("HDFC BANK LIMITED EQ NEW FV RE. 1/-").
+        #
+        # The fallback is not redundant. A company's ISIN changes on
+        # corporate actions (face-value splits, mergers) while the AMFI
+        # mapping still carries the older one — Kotak Bank arrives as
+        # INE237A01028 but is mapped under INE237A01036. The name matcher
+        # resolves exactly those, so dropping it would silently strip
+        # market-cap category from a few percent of each fund's weight.
+        api_isin = (rec.get("isin") or "").strip()
+        if api_isin and api_isin in isin_mapping:
+            isin, method, score = api_isin, METHOD_ISIN, 100.0
+        else:
+            isin, method, score = matcher.match(stock)
+            if api_isin and isin:
+                # Recovered a stale/revised ISIN via the name — worth marking
+                # distinctly so the alias report shows how often this happens.
+                method = METHOD_ISIN_FALLBACK
 
         amfi_rec: Dict = isin_mapping.get(isin, {}) if isin else {}
 
@@ -58,10 +84,19 @@ def enrich(
                 "Match Method":  method,
                 "Match Score":   score,
                 # ── enriched data ────────────────────────────────────────
+                # AMFI is authoritative for sector/industry: the MCP server
+                # groups holdings by these strings, and AMFI's vocabulary
+                # ("Banking and Finance") differs from the API's ("Financial
+                # Services"). Mixing the two would split one real sector into
+                # two keys. The API's labels are used ONLY when AMFI has no
+                # record for the holding, where the choice is between the
+                # API's label and nothing at all.
                 "Mkt Cap Cat":   amfi_rec.get("mktcap_category", ""),
                 "Mkt Cap ₹Cr":  amfi_rec.get("mktcap_cr"),
-                "Industry":      amfi_rec.get("industry", ""),
-                "Sector":        amfi_rec.get("sector", ""),
+                "Industry":      amfi_rec.get("industry")
+                                 or rec.get("api_industry", ""),
+                "Sector":        amfi_rec.get("sector")
+                                 or rec.get("raw_sector", ""),
             }
         )
 

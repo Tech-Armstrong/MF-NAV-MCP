@@ -147,3 +147,378 @@ Aggressive Hybrid|UTI Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Union Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|WhiteOak Capital Aggressive Hybrid Fund Regular Growth
 Aggressive Hybrid|quant Aggressive Hybrid Fund - Growth - Regular
+
+# Large & Mid Cap — all 33 taken verbatim from scheme_master in Azure Blob
+# (category = 'LARGE & MID CAP'), not typed by hand.
+
+Large & Mid Cap|ABSL Large & Mid Cap Fund - Regular Growth
+Large & Mid Cap|Axis Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|BOI Large & Mid Cap Fund Regular - Growth
+Large & Mid Cap|Bajaj Finserv Large and Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Bandhan Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Baroda BNP Paribas Large and Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Canara Robeco Large and Mid Cap Fund - Regular Growth
+Large & Mid Cap|DSP Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Edelweiss Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Franklin India Large & Mid Cap Fund - Growth
+Large & Mid Cap|HDFC Large and Mid Cap Fund - Growth
+Large & Mid Cap|HSBC Large & Mid Cap Fund - Regular Growth
+Large & Mid Cap|Helios Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|ICICI Pru Large & Mid Cap Fund - Growth
+Large & Mid Cap|ITI Large & Midcap Fund - Regular - Growth
+Large & Mid Cap|Invesco India Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|JM Large & Mid Cap Fund (Regular) - Growth
+Large & Mid Cap|Kotak Large & Midcap Fund - Growth-Regular
+Large & Mid Cap|LIC MF Large & Mid Cap Fund-Regular-Growth
+Large & Mid Cap|Mahindra Manulife Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Mirae Asset Large & Midcap Fund - Regular - Growth
+Large & Mid Cap|Motilal Oswal Large and Midcap Fund - Regular Growth
+Large & Mid Cap|Navi Large & Midcap Fund - Regular - Growth
+Large & Mid Cap|Nippon India Vision Large & Midcap Fund-Growth
+Large & Mid Cap|PGIM India Large and Midcap Fund - Regular - Growth
+Large & Mid Cap|SBI Large & Midcap Fund - Regular - Growth
+Large & Mid Cap|Samco Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Sundaram Large and Midcap Fund Regular - Growth
+Large & Mid Cap|Tata Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|UTI Large & Mid Cap Fund - Regular - Growth
+Large & Mid Cap|Union Large & Midcap Fund - Regular - Growth
+Large & Mid Cap|Whiteoak Capital Large & Mid Cap Fund Regular Growth
+Large & Mid Cap|quant Large & Mid Cap Fund - Growth
+
+# Flexi Cap — all 44 taken verbatim from scheme_master in Azure Blob
+# (category = 'FLEXI CAP'), not typed by hand.
+
+Flexi Cap|360 ONE Flexicap Fund - Regular - Growth
+Flexi Cap|ABSL Flexi Cap Fund - Growth - Regular
+Flexi Cap|Abakkus Flexi Cap Fund - Regular - Growth
+Flexi Cap|Axis Flexi Cap Fund - Regular - Growth
+Flexi Cap|BOI Flexi Cap Fund Regular - Growth
+Flexi Cap|Bajaj Finserv Flexi Cap Fund - Regular-Growth
+Flexi Cap|Bandhan Flexi Cap Fund - Regular - Growth
+Flexi Cap|Baroda BNP Paribas Flexi Cap Fund - Regular Growth
+Flexi Cap|Canara Robeco Flexicap Fund - Regular Growth
+Flexi Cap|Capitalmind Flexi Cap Fund Regular Growth
+Flexi Cap|DSP Flexi Cap Fund - Regular - Growth
+Flexi Cap|Edelweiss Flexi Cap Fund - Regular - Growth
+Flexi Cap|Franklin India Flexi Cap Fund - Growth
+Flexi Cap|HDFC Flexi Cap Fund - Growth
+Flexi Cap|HSBC Flexi Cap Fund - Regular Growth
+Flexi Cap|Helios Flexi Cap Fund - Regular - Growth
+Flexi Cap|ICICI Pru Flexicap Fund - Growth
+Flexi Cap|ITI Flexi Cap Fund - Regular - Growth
+Flexi Cap|Invesco India Flexi Cap Fund - Regular - Growth
+Flexi Cap|JM Flexicap Fund (Regular) - Growth
+Flexi Cap|Kotak Flexicap Fund - Growth
+Flexi Cap|LIC MF Flexi Cap Fund-Regular-Growth
+Flexi Cap|Mahindra Manulife Flexi Cap Fund - Regular - Growth
+Flexi Cap|Mirae Asset Flexi Cap Fund - Regular - Growth
+Flexi Cap|Motilal Oswal Flexi Cap Fund Regular-Growth
+Flexi Cap|NJ Flexi Cap Fund - Regular - Growth
+Flexi Cap|Navi Flexi Cap Fund - Regular - Growth
+Flexi Cap|Nippon India Flexi Cap Fund - Regular - Growth
+Flexi Cap|Old Bridge Flexi Cap Fund Regular Growth
+Flexi Cap|PGIM India Flexi Cap Fund - Regular - Growth
+Flexi Cap|Parag Parikh Flexi Cap Fund - Regular - Growth
+Flexi Cap|SBI Flexicap Fund - Regular - Growth
+Flexi Cap|Samco Flexi Cap Fund - Regular - Growth
+Flexi Cap|Shriram Flexi Cap Fund - Regular Growth
+Flexi Cap|Sundaram Flexicap Fund Regular Growth
+Flexi Cap|Tata Flexi Cap Fund - Regular-Growth
+Flexi Cap|Taurus Flexi Cap Fund - Regular - Growth
+Flexi Cap|The Wealth Co. Flexi Cap Fund - Regular Growth
+Flexi Cap|TrustMF Flexi Cap Fund - Regular - Growth
+Flexi Cap|UTI Flexi Cap Fund-Growth
+Flexi Cap|Unifi Flexi Cap Fund - Regular Growth
+Flexi Cap|Union Flexi Cap Fund - Growth
+Flexi Cap|WhiteOak Capital Flexi Cap Fund Regular-Growth
+Flexi Cap|quant Flexi Cap Fund - Growth - Regular
+
+# ELSS — all 31 taken verbatim from scheme_master in Azure Blob
+# (category = 'ELSS'), not typed by hand.
+
+ELSS|ABSL ELSS Tax Saver Fund - Regular - Growth
+ELSS|Axis ELSS Tax Saver Fund - Regular - Growth
+ELSS|BOI ELSS Tax Saver - Regular - Growth
+ELSS|Bajaj Finserv ELSS Tax Saver Fund - Regular - Growth
+ELSS|Bandhan ELSS Tax Saver Fund - Regular - Growth
+ELSS|Baroda BNP Paribas ELSS Tax Saver Fund - Regular - Growth
+ELSS|Canara Robeco ELSS Tax Saver - Regular - Growth
+ELSS|DSP ELSS Tax Saver Fund - Regular - Growth
+ELSS|Edelweiss ELSS Tax Saver Fund - Regular - Growth
+ELSS|Franklin India ELSS Tax Saver Fund - Growth
+ELSS|HDFC ELSS Tax Saver - Regular - Growth
+ELSS|ICICI Prudential ELSS Tax Saver Fund - Growth
+ELSS|ITI ELSS Tax Saver Fund - Regular - Growth
+ELSS|JM ELSS Tax Saver Fund (Regular) - Growth
+ELSS|Kotak ELSS Tax Saver Fund - Regular - Growth
+ELSS|LIC MF ELSS Tax Saver - Regular - Growth
+ELSS|Motilal Oswal ELSS Tax Saver Fund - Regular - Growth
+ELSS|Nippon India ELSS Tax Saver Fund - Growth
+ELSS|PGIM India ELSS Tax Saver Fund - Regular - Growth
+ELSS|Parag Parikh ELSS Tax Saver Fund - Regular - Growth
+ELSS|Quantum ELSS Tax Saver Fund - Regular - Growth
+ELSS|SBI ELSS Tax Saver Fund - Regular - Growth
+ELSS|Samco ELSS Tax Saver Fund - Regular - Growth
+ELSS|Shriram ELSS Tax Saver Fund - Regular Growth
+ELSS|Sundaram ELSS Tax Saver Fund - Regular - Growth
+ELSS|Tata ELSS Fund - Regular - Growth
+ELSS|Taurus ELSS Tax Saver Fund - Regular - Growth
+ELSS|UTI ELSS Tax Saver Fund - Regular - Growth
+ELSS|Union ELSS Tax Saver Fund - Regular - Growth
+ELSS|WhiteOak Capital ELSS Tax Saver Fund - Regular Growth
+ELSS|quant ELSS Tax Saver Fund - Growth - Regular
+
+# Multi Cap — all 32 taken verbatim from scheme_master in Azure Blob
+# (category = 'MULTI CAP'), not typed by hand.
+
+Multi Cap|ABSL Multi-Cap Fund - Regular Growth
+Multi Cap|Axis Multicap Fund - Regular - Growth
+Multi Cap|BOI Multi Cap Fund Regular - Growth
+Multi Cap|Bajaj Finserv Multi Cap Fund - Regular - Growth
+Multi Cap|Bandhan Multi Cap Fund - Growth - Regular
+Multi Cap|Baroda BNP Paribas Multi Cap Fund - Regular Growth
+Multi Cap|Canara Robeco Multi Cap Fund - Regular - Growth
+Multi Cap|DSP Multicap Fund - Regular - Growth
+Multi Cap|Edelweiss Multi Cap Fund - Regular - Growth
+Multi Cap|Franklin India Multi Cap Fund - Growth
+Multi Cap|Groww Multicap Fund - Regular - Growth
+Multi Cap|HDFC Multi Cap Fund - Growth
+Multi Cap|HSBC Multi Cap Fund - Regular - Growth
+Multi Cap|ICICI Pru Multicap Fund - Growth
+Multi Cap|ITI Multi Cap Fund - Regular - Growth
+Multi Cap|Invesco India Multicap Fund - Regular Growth
+Multi Cap|Kotak Multicap Fund-Regular-Growth
+Multi Cap|LIC MF Multi Cap Fund-Regular-Growth
+Multi Cap|Mahindra Manulife Multi Cap Fund - Regular - Growth
+Multi Cap|Mirae Asset Multicap Fund - Regular - Growth
+Multi Cap|Motilal Oswal Multi Cap Fund Regular Growth
+Multi Cap|Nippon India Multi Cap Fund - Growth
+Multi Cap|PGIM India Multi Cap Fund - Regular - Growth
+Multi Cap|SBI Multicap Fund - Regular - Growth
+Multi Cap|Samco Multi Cap Fund - Regular - Growth
+Multi Cap|Sundaram Multi Cap Fund - Growth
+Multi Cap|Tata Multicap Fund - Regular - Growth
+Multi Cap|TrustMF Multi Cap Fund - Regular-Growth
+Multi Cap|UTI Multi Cap Fund - Regular - Growth
+Multi Cap|Union Multicap Fund - Regular - Growth
+Multi Cap|WhiteOak Capital Multi Cap Fund Regular Growth
+Multi Cap|quant Multi Cap Fund - Growth - Regular
+
+# Focused — all 28 taken verbatim from scheme_master in Azure Blob
+# (category = 'FOCUSED'), not typed by hand.
+
+Focused|360 ONE Focused Fund - Regular - Growth
+Focused|ABSL Focused Fund - Growth
+Focused|Axis Focused Fund - Regular - Growth
+Focused|Bandhan Focused Fund - Regular - Growth
+Focused|Baroda BNP Paribas Focused Fund - Regular - Growth
+Focused|Canara Robeco Focused Fund - Regular - Growth
+Focused|DSP Focused Fund - Regular - Growth
+Focused|Edelweiss Focused Fund - Regular - Growth
+Focused|Franklin India Focused Equity Fund - Growth
+Focused|HDFC Focused Fund - Growth
+Focused|HSBC Focused Fund - Regular Growth
+Focused|ICICI Pru Focused Equity Fund - Growth
+Focused|ITI Focused Fund - Regular - Growth
+Focused|Invesco India Focused Fund - Regular - Growth
+Focused|JM Focused Fund (Regular) - Growth
+Focused|Kotak Focused Fund - Regular - Growth
+Focused|LIC MF Focused Fund-Regular-Growth
+Focused|Mahindra Manulife Focused Fund - Regular - Growth
+Focused|Mirae Asset Focused Fund Regular Growth
+Focused|Motilal Oswal Focused Fund - Regular Growth
+Focused|Nippon India Focused Fund - Growth
+Focused|Old Bridge Focused Fund - Regular Growth
+Focused|SBI Focused Fund - Regular - Growth
+Focused|Sundaram Focused Fund - Growth
+Focused|Tata Focused Fund-Regular-Growth
+Focused|UTI Focused Fund - Regular - Growth
+Focused|Union Focused Fund - Regular - Growth
+Focused|quant Focused Fund - Growth - Regular
+
+# Sectoral Banking & Financial Services — all 28 taken verbatim from scheme_master in Azure Blob
+# (category = 'SECTORAL BANKING FINANCIAL SERVICES'), not typed by hand.
+
+Sectoral Banking & Financial Services|ABSL Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|BOI Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Bajaj Finserv Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Bandhan Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Baroda BNP Paribas Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Canara Robeco Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|DSP Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Edelweiss Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Groww Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|HDFC Banking & Financial Services Fund - Growth
+Sectoral Banking & Financial Services|HSBC Financial Services Fund - Regular Growth
+Sectoral Banking & Financial Services|Helios Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|ICICI Prudential Banking and Financial Services Fund - Growth
+Sectoral Banking & Financial Services|ITI Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Invesco India Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Kotak Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|LIC MF Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Mahindra Manulife Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Mirae Asset Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Motilal Oswal Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Nippon India Banking & Financial Services Fund - Growth
+Sectoral Banking & Financial Services|SBI Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Sundaram Financial Services Opportunities Fund - Regular - Growth
+Sectoral Banking & Financial Services|Tata Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|Taurus Banking & Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|UTI Banking and Financial Services Fund - Regular - Growth
+Sectoral Banking & Financial Services|WhiteOak Capital Banking & Financial Services Fund - Regular Growth
+Sectoral Banking & Financial Services|quant BFSI Fund - Growth - Regular
+
+# Thematic Consumption — all 25 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC CONSUMPTION'), not typed by hand.
+
+Thematic Consumption|ABSL Consumption Fund - Regular - Growth
+Thematic Consumption|Axis Consumption Fund - Regular - Growth
+Thematic Consumption|BOI Consumption Fund - Regular - Growth
+Thematic Consumption|Bajaj Finserv Consumption Fund - Regular - Growth
+Thematic Consumption|Baroda BNP Paribas India Consumption Fund - Regular - Growth
+Thematic Consumption|Canara Robeco Consumption Fund - Regular - Growth
+Thematic Consumption|Edelweiss Consumption Fund - Regular - Growth
+Thematic Consumption|HDFC Consumption Fund - Regular - Growth
+Thematic Consumption|HSBC Consumption Fund - Regular - Growth
+Thematic Consumption|ICICI Prudential Bharat Consumption Fund - Growth
+Thematic Consumption|ITI Bharat Consumption Fund - Regular - Growth
+Thematic Consumption|Invesco India Consumption Fund - Regular - Growth
+Thematic Consumption|Kotak Consumption Fund - Regular - Growth
+Thematic Consumption|LIC MF Consumption Fund - Regular - Growth
+Thematic Consumption|Mahindra Manulife Consumption Fund - Regular - Growth
+Thematic Consumption|Mirae Asset Great Consumer Fund - Regular - Growth
+Thematic Consumption|Motilal Oswal Consumption Fund - Regular - Growth
+Thematic Consumption|Nippon India Consumption Fund - Growth
+Thematic Consumption|SBI Consumption Opportunities Fund - Regular - Growth
+Thematic Consumption|Sundaram Consumption Fund - Regular - Growth
+Thematic Consumption|Tata India Consumer Fund - Regular - Growth
+Thematic Consumption|UTI India Consumer Fund - Regular - Growth
+Thematic Consumption|Union Consumption Fund - Regular - Growth
+Thematic Consumption|WhiteOak Capital Consumption Opportunities Fund - Regular Growth
+Thematic Consumption|quant Consumption Fund - Growth - Regular
+
+# Value — all 22 taken verbatim from scheme_master in Azure Blob
+# (category = 'VALUE'), not typed by hand.
+
+Value|ABSL Value Fund - Growth
+Value|Axis Value Fund - Regular - Growth
+Value|Bandhan Value Fund - Regular - Growth
+Value|Baroda BNP Paribas Value Fund - Regular - Growth
+Value|Canara Robeco Value Fund - Regular - Growth
+Value|DSP Value Fund - Regular - Growth
+Value|Groww Value Fund - Regular - Growth
+Value|HDFC Value Fund - Growth
+Value|HSBC Value Fund - Regular Growth
+Value|ICICI Pru Value Fund - Growth
+Value|ITI Value Fund - Regular - Growth
+Value|JM Value Fund (Regular) - Growth
+Value|LIC MF Value Fund-Regular-Growth
+Value|Mahindra Manulife Value Fund - Regular - Growth
+Value|Nippon India Value Fund - Growth
+Value|Quantum Value Fund - Regular Growth
+Value|Sundaram Value Fund Regular - Growth
+Value|Tata Value Fund - Regular - Growth
+Value|Templeton India Value Fund - Growth
+Value|UTI Value Fund - Regular - Growth
+Value|Union Value Fund - Regular - Growth
+Value|quant Value Fund - Growth - Regular
+
+# Sectoral Infrastructure — all 20 taken verbatim from scheme_master in Azure Blob
+# (category = 'SECTORAL INFRASTRUCTURE'), not typed by hand.
+
+Sectoral Infrastructure|ABSL Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|BOI Manufacturing & Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Bandhan Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Canara Robeco Infrastructure - Regular - Growth
+Sectoral Infrastructure|DSP India T.I.G.E.R. Fund - Regular - Growth
+Sectoral Infrastructure|Franklin Build India Fund - Growth
+Sectoral Infrastructure|HDFC Infrastructure Fund - Growth
+Sectoral Infrastructure|HSBC Infrastructure Fund - Regular Growth
+Sectoral Infrastructure|ICICI Prudential Infrastructure Fund - Growth
+Sectoral Infrastructure|Invesco India Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Kotak Infrastructure and Economic Reform Fund - Regular - Growth
+Sectoral Infrastructure|LIC MF Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Mirae Asset Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Motilal Oswal Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|SBI Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Sundaram Infrastructure Advantage Fund - Regular - Growth
+Sectoral Infrastructure|Tata Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|Taurus Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|UTI Infrastructure Fund - Regular - Growth
+Sectoral Infrastructure|quant Infrastructure Fund - Growth - Regular
+
+# Thematic Business Cycle — all 19 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC BUSINESS CYCLE'), not typed by hand.
+
+Thematic Business Cycle|ABSL Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Axis Business Cycles Fund - Regular - Growth
+Thematic Business Cycle|BOI Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Bandhan Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Baroda BNP Paribas Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|DSP Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Edelweiss Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|HDFC Business Cycle Fund - Growth
+Thematic Business Cycle|HSBC Business Cycles Fund - Regular Growth
+Thematic Business Cycle|ICICI Prudential Business Cycle Fund - Growth
+Thematic Business Cycle|ITI Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Invesco India Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Kotak Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Mahindra Manulife Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Motilal Oswal Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Sundaram Business Cycle Fund - Regular Plan - Growth
+Thematic Business Cycle|Tata Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|Union Business Cycle Fund - Regular - Growth
+Thematic Business Cycle|quant Business Cycle Fund - Growth - Regular
+
+# Sectoral Pharma & Healthcare — all 17 taken verbatim from scheme_master in Azure Blob
+# (category = 'SECTORAL PHARMA HEALTHCARE'), not typed by hand.
+
+Sectoral Pharma & Healthcare|Aditya Birla Sun Life Pharma and Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Bajaj Finserv Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Bandhan Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Baroda BNP Paribas Health and Wellness Fund - Regular - Growth
+Sectoral Pharma & Healthcare|DSP Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|HDFC Pharma and Healthcare Fund - Growth
+Sectoral Pharma & Healthcare|ICICI Prudential Pharma Healthcare and Diagnostics (P.H.D) Fund - Growth
+Sectoral Pharma & Healthcare|ITI Pharma and Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Kotak Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|LIC MF Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Mirae Asset Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|Nippon India Pharma Fund - Growth
+Sectoral Pharma & Healthcare|PGIM India Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|SBI Healthcare Opportunities Fund - Regular - Growth
+Sectoral Pharma & Healthcare|UTI Healthcare Fund - Regular - Growth
+Sectoral Pharma & Healthcare|WhiteOak Capital Pharma and Healthcare Fund Regular Growth
+Sectoral Pharma & Healthcare|quant Healthcare Fund - Growth - Regular
+
+# Sectoral Technology — all 12 taken verbatim from scheme_master in Azure Blob
+# (category = 'SECTORAL TECHNOLOGY'), not typed by hand.
+
+Sectoral Technology|Aditya Birla Sun Life Digital India Fund - Regular - Growth
+Sectoral Technology|Edelweiss Technology Fund - Regular - Growth
+Sectoral Technology|Franklin India Technology Fund - Growth
+Sectoral Technology|HDFC Technology Fund - Regular - Growth
+Sectoral Technology|ICICI Prudential Technology Fund - Growth
+Sectoral Technology|Invesco India Technology Fund - Regular - Growth
+Sectoral Technology|Kotak Technology Fund - Regular - Growth
+Sectoral Technology|Motilal Oswal Digital India Fund - Regular - Growth
+Sectoral Technology|SBI Technology Opportunities Fund - Regular - Growth
+Sectoral Technology|Tata Digital India Fund - Regular - Growth
+Sectoral Technology|WhiteOak Capital Digital Bharat Fund Regular Growth
+Sectoral Technology|quant Teck Fund - Regular - Growth
+
+# Thematic Innovation — all 12 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC INNOVATION'), not typed by hand.
+
+Thematic Innovation|Axis Innovation Fund - Regular - Growth
+Thematic Innovation|Bandhan Innovation Fund - Regular - Growth
+Thematic Innovation|Baroda BNP Paribas Innovation Fund - Regular - Growth
+Thematic Innovation|HDFC Innovation Fund - Regular - Growth
+Thematic Innovation|ICICI Prudential Innovation Fund - Growth
+Thematic Innovation|Mahindra Manulife Innovation Opportunities Fund - Regular - Growth
+Thematic Innovation|Motilal Oswal Innovation Opportunities Fund - Regular - Growth
+Thematic Innovation|Nippon India Innovation Fund - Growth
+Thematic Innovation|SBI Innovative Opportunities Fund - Regular - Growth
+Thematic Innovation|Tata India Innovation Fund - Regular - Growth
+Thematic Innovation|UTI Innovation Fund - Regular - Growth
+Thematic Innovation|Union Innovation & Opportunities Fund - Regular - Growth

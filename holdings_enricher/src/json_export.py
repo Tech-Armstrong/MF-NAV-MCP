@@ -152,6 +152,15 @@ def build_fund_profile_json(enriched: List[Dict],
                 unresolved.append({"fund": name,
                                    "cap_category": f.get("cap_category"),
                                    "best_score": r["score"]})
+                # Skip it entirely rather than keying by the holdings name.
+                # The file advertises keyed_by: nav_scheme_name, and the MCP
+                # tool joins on that exact string — a fund keyed by the other
+                # source's spelling would never be found by a lookup, but WOULD
+                # be counted in fund_count and listed by
+                # list_funds_with_holdings(), i.e. advertised but unreachable.
+                # Under strict=True the export raises before reaching here;
+                # this path only runs when the caller passed strict=False.
+                continue
 
         f["equity_pct"] = round(f["equity_pct"], 5)
         f["market_cap"] = {k: round(v, 5) for k, v in f["market_cap"].items()}
