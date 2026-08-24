@@ -77,6 +77,9 @@ from __future__ import annotations
 import os
 import sys
 import re
+import time
+import threading
+import datetime as _dt
 from datetime import date, timedelta
 from typing import Optional, Union
 
@@ -297,7 +300,103 @@ def _build_connection() -> duckdb.DuckDBPyConnection:
     return con
 
 
-CON = _build_connection()
+# ── connection handle + periodic blob refresh ─────────────────────────────────
+#
+# The parquet is DOWNLOADED to local disk at startup (see _download_az_to_local),
+# so without a refresh the process serves whatever the blob held at import time
+# for its entire life — new NAVs uploaded afterwards stay invisible until someone
+# restarts the app. A background thread therefore rebuilds the connection every
+# BLOB_REFRESH_SECONDS and swaps it in atomically.
+#
+# Why a cursor per call: swapping _CON mid-call would break the tools that create
+# a TEMP TABLE and then query it, and DuckDB temp tables are per-connection, so a
+# single shared handle also lets concurrent calls clobber each other's _targets.
+# con.cursor() gives each call its own temp namespace over the same database, and
+# an in-flight cursor keeps its parent alive across a swap.
+
+_CON_LOCK = threading.Lock()
+_CON = _build_connection()
+
+
+def _db() -> duckdb.DuckDBPyConnection:
+    """A private cursor over the current connection. Use once per tool call."""
+    with _CON_LOCK:
+        return _CON.cursor()
+
+
+def _blob_signature() -> Optional[tuple]:
+    """
+    Cheap change-detector: (name, last_modified, size) for every NAV parquet.
+    Returns None if the signature can't be read, which the caller treats as
+    "don't know" and skips the refresh rather than risking a pointless download.
+    """
+    if not AZURE_CONN:
+        return None
+    try:
+        from azure.storage.blob import ContainerClient
+        sig = []
+        for uri in (NAV_HISTORY_PATH, SCHEME_MASTER_PATH):
+            if not re.match(r"^(az|azure)://", uri):
+                continue
+            container, blob_path = _parse_az_uri(uri)
+            prefix = blob_path.split("*")[0].rsplit("/", 1)[0] if "*" in blob_path else blob_path
+            cc = ContainerClient.from_connection_string(AZURE_CONN, container_name=container)
+            for b in cc.list_blobs(name_starts_with=prefix):
+                if b.name.endswith(".parquet"):
+                    sig.append((b.name, str(b.last_modified), b.size))
+        return tuple(sorted(sig))
+    except Exception as exc:
+        sys.stderr.write(f"NAV MCP: blob signature check failed: {exc}\n")
+        return None
+
+
+# Seed the signature from the blob just loaded, so the first scheduled check is
+# a no-op unless the blob actually moved in the meantime.
+_LAST_SIGNATURE = _blob_signature()
+_LAST_RELOAD = _dt.datetime.now(_dt.timezone.utc)
+
+
+def _refresh_once() -> bool:
+    """Rebuild and swap the connection if the blob changed. True if swapped."""
+    global _CON, _LAST_SIGNATURE, _LAST_RELOAD
+
+    sig = _blob_signature()
+    if sig is None or sig == _LAST_SIGNATURE:
+        return False
+
+    # Built OUTSIDE the lock: the download is slow and touches no shared state,
+    # so in-flight calls keep serving the old data while it runs.
+    new_con = _build_connection()
+    with _CON_LOCK:
+        old, _CON = _CON, new_con
+        _LAST_SIGNATURE = sig
+        _LAST_RELOAD = _dt.datetime.now(_dt.timezone.utc)
+
+    # Deliberately NOT old.close(): a cursor handed out just before the swap may
+    # still be mid-query. Dropping the reference lets the GC reclaim it once the
+    # last cursor releases it.
+    del old
+    sys.stderr.write(f"NAV MCP: blob changed, data reloaded at {_LAST_RELOAD:%Y-%m-%d %H:%M}Z\n")
+    return True
+
+
+def _refresh_loop(interval_s: int) -> None:
+    while True:
+        time.sleep(interval_s)
+        try:
+            _refresh_once()
+        except Exception as exc:
+            # A failed refresh must never take the server down or drop the data
+            # it is already serving — stale beats dead.
+            sys.stderr.write(f"NAV MCP: refresh failed, keeping existing data: {exc}\n")
+
+
+BLOB_REFRESH_SECONDS = int(os.environ.get("BLOB_REFRESH_SECONDS", "14400"))  # 4h
+if BLOB_REFRESH_SECONDS > 0 and AZURE_CONN:
+    threading.Thread(
+        target=_refresh_loop, args=(BLOB_REFRESH_SECONDS,),
+        daemon=True, name="blob-refresh",
+    ).start()
 
 
 # ── period resolution ──────────────────────────────────────────────────────────
@@ -393,7 +492,8 @@ def _compute_returns(scheme_codes: list[str], period: str,
     ph = ", ".join(["?"] * len(codes))
 
     # 1) metadata for all requested codes
-    meta_rows = CON.execute(
+    con = _db()  # one cursor per call: private TEMP namespace
+    meta_rows = con.execute(
         f"""SELECT scheme_code, scheme_name, fund_house, category
             FROM scheme_master WHERE scheme_code IN ({ph})""",
         codes,
@@ -402,7 +502,7 @@ def _compute_returns(scheme_codes: list[str], period: str,
             for r in meta_rows}
 
     # 2) per-fund anchor (last NAV) and inception (first NAV), one grouped query
-    anchor_rows = CON.execute(
+    anchor_rows = con.execute(
         f"""SELECT scheme_code, MAX(nav_date), MIN(nav_date)
             FROM nav_history WHERE scheme_code IN ({ph})
             GROUP BY scheme_code""",
@@ -449,9 +549,9 @@ def _compute_returns(scheme_codes: list[str], period: str,
 
     start_navs, end_navs = {}, {}
     if targets:
-        CON.execute("CREATE OR REPLACE TEMP TABLE _targets("
+        con.execute("CREATE OR REPLACE TEMP TABLE _targets("
                     "scheme_code VARCHAR, start_target DATE, end_target DATE);")
-        CON.executemany("INSERT INTO _targets VALUES (?, ?, ?);", targets)
+        con.executemany("INSERT INTO _targets VALUES (?, ?, ?);", targets)
 
         # 4) start NAV per fund — direction depends on the window type
         if start_snap == "before":
@@ -472,7 +572,7 @@ def _compute_returns(scheme_codes: list[str], period: str,
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY t.scheme_code ORDER BY n.nav_date ASC) = 1
             """
-        for c, d, v in CON.execute(start_sql).fetchall():
+        for c, d, v in con.execute(start_sql).fetchall():
             start_navs[c] = (d, v)
 
         # 5) end NAV per fund — latest NAV on/before the anchor
@@ -484,7 +584,7 @@ def _compute_returns(scheme_codes: list[str], period: str,
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY t.scheme_code ORDER BY n.nav_date DESC) = 1
         """
-        for c, d, v in CON.execute(end_sql).fetchall():
+        for c, d, v in con.execute(end_sql).fetchall():
             end_navs[c] = (d, v)
 
     # assemble
@@ -523,7 +623,7 @@ def _resolve_ticker(t: str) -> str:
 
 def _index_available() -> bool:
     try:
-        CON.execute("SELECT 1 FROM index_master LIMIT 1;")
+        _db().execute("SELECT 1 FROM index_master LIMIT 1;")
         return True
     except Exception:
         return False
@@ -553,13 +653,14 @@ def _compute_index_returns(tickers: list[str], period: str,
 
     ph = ", ".join(["?"] * len(resolved))
 
-    meta_rows = CON.execute(
+    con = _db()  # one cursor per call: private TEMP namespace
+    meta_rows = con.execute(
         f"SELECT ticker, index_name FROM index_master WHERE ticker IN ({ph})",
         resolved,
     ).fetchall()
     meta = {r[0]: r[1] for r in meta_rows}
 
-    anchor_rows = CON.execute(
+    anchor_rows = con.execute(
         f"""SELECT ticker, MAX(nav_date), MIN(nav_date)
             FROM index_history WHERE ticker IN ({ph})
             GROUP BY ticker""",
@@ -600,13 +701,13 @@ def _compute_index_returns(tickers: list[str], period: str,
 
     start_rows, end_rows = {}, {}
     if targets:
-        CON.execute("CREATE OR REPLACE TEMP TABLE _idx_targets("
+        con.execute("CREATE OR REPLACE TEMP TABLE _idx_targets("
                     "ticker VARCHAR, start_target DATE, end_target DATE);")
-        CON.executemany("INSERT INTO _idx_targets VALUES (?, ?, ?);", targets)
+        con.executemany("INSERT INTO _idx_targets VALUES (?, ?, ?);", targets)
 
         order = "DESC" if start_snap == "before" else "ASC"
         op = "<=" if start_snap == "before" else ">="
-        for t, d, v in CON.execute(f"""
+        for t, d, v in con.execute(f"""
             SELECT t.ticker, h.nav_date, h.close
             FROM _idx_targets t
             JOIN index_history h
@@ -616,7 +717,7 @@ def _compute_index_returns(tickers: list[str], period: str,
         """).fetchall():
             start_rows[t] = (d, v)
 
-        for t, d, v in CON.execute("""
+        for t, d, v in con.execute("""
             SELECT t.ticker, h.nav_date, h.close
             FROM _idx_targets t
             JOIN index_history h
@@ -807,7 +908,7 @@ def search_funds(query: str, limit: int = 10) -> dict:
 
     where = " AND ".join(["lower(scheme_name) LIKE ?"] * len(tokens))
     params = [f"%{t}%" for t in tokens]
-    rows = CON.execute(
+    rows = _db().execute(
         f"""SELECT scheme_code, scheme_name, fund_house, category
             FROM scheme_master WHERE {where}
             ORDER BY length(scheme_name), scheme_name""",
@@ -927,7 +1028,7 @@ def get_category_returns(
         ascending: Sort direction (default False = best/highest first).
         staleness_days: Max allowed lag from the category as-of date (default 7).
     """
-    rows = CON.execute(
+    rows = _db().execute(
         """SELECT scheme_code FROM scheme_master
            WHERE UPPER(category) = UPPER(?) ORDER BY scheme_name""",
         [category],
@@ -994,7 +1095,7 @@ def list_indices() -> dict:
         return {"indices": [], "count": 0,
                 "error": "Index data is not loaded on this server. Run "
                          "`python Index/fetch_index_data.py` to generate it."}
-    rows = CON.execute("""
+    rows = _db().execute("""
         SELECT m.ticker, m.index_name,
                MIN(h.nav_date), MAX(h.nav_date), COUNT(*)
         FROM index_master m
@@ -1200,9 +1301,35 @@ def list_funds_with_holdings() -> dict:
 
 
 @mcp.tool()
+def data_status() -> dict:
+    """Freshness of the NAV data this server is serving.
+
+    The parquet is downloaded from Blob at startup and refreshed periodically in
+    the background, so the numbers every other tool returns are anchored to the
+    snapshot described here. Call this to check how current the data is, or when
+    a fund/NAV you expect to exist seems to be missing.
+    """
+    con = _db()
+    latest, earliest, schemes = con.execute(
+        "SELECT max(nav_date), min(nav_date), count(DISTINCT scheme_code) "
+        "FROM nav_history").fetchone()
+    age_h = (_dt.datetime.now(_dt.timezone.utc) - _LAST_RELOAD).total_seconds() / 3600
+    return {
+        "latest_nav_date": str(latest),
+        "earliest_nav_date": str(earliest),
+        "schemes": schemes,
+        "snapshot_loaded_at_utc": _LAST_RELOAD.strftime("%Y-%m-%d %H:%M:%SZ"),
+        "snapshot_age_hours": round(age_h, 2),
+        "refresh_interval_hours": (BLOB_REFRESH_SECONDS / 3600) if BLOB_REFRESH_SECONDS else None,
+        "auto_refresh": bool(BLOB_REFRESH_SECONDS and AZURE_CONN),
+        "source": "azure-blob" if AZURE_CONN else "local-parquet",
+    }
+
+
+@mcp.tool()
 def list_categories() -> dict:
     """List every distinct category name present in scheme_master (sorted)."""
-    rows = CON.execute(
+    rows = _db().execute(
         """SELECT DISTINCT category FROM scheme_master
            WHERE category IS NOT NULL ORDER BY category"""
     ).fetchall()
@@ -1216,7 +1343,7 @@ def list_funds_in_category(category: str) -> dict:
     Args:
         category: Category name (case-insensitive).
     """
-    rows = CON.execute(
+    rows = _db().execute(
         """SELECT scheme_code, scheme_name, fund_house FROM scheme_master
            WHERE UPPER(category) = UPPER(?) ORDER BY fund_house, scheme_name""",
         [category],
