@@ -79,6 +79,7 @@ import sys
 import re
 import time
 import threading
+import statistics
 import datetime as _dt
 from datetime import date, timedelta
 from typing import Optional, Union
@@ -111,6 +112,12 @@ INDEX_MASTER_PATH = os.environ.get(
 # is expected to move to Azure Blob as parquet, like the NAV data.
 FUND_HOLDINGS_PATH = os.environ.get(
     "FUND_HOLDINGS_PATH", os.path.join(_HERE, "data", "fund_holdings.json"))
+
+# Month-end risk-free rates for the Sharpe denominator. Committed data rather
+# than a constant: the rate is itself as-of a date, so it must pair with the
+# NAV window or the result silently mixes two different moments.
+RISK_FREE_RATES_PATH = os.environ.get(
+    "RISK_FREE_RATES_PATH", os.path.join(_HERE, "data", "risk_free_rates.json"))
 
 # Friendly names -> tickers, so callers can say "NIFTY50" instead of
 # "NIFTY_50". Resolution is case-insensitive and strips spaces/underscores.
@@ -1297,6 +1304,330 @@ def list_funds_with_holdings() -> dict:
         "as_of": next(iter(funds.values())).get("as_of") if funds else None,
         "generated_at": HOLDINGS.get("generated_at"),
         "by_cap_category": {k: sorted(v) for k, v in sorted(by_cap.items())},
+    }
+
+
+def _nav_series(
+    scheme_code: str,
+    start_date: date,
+    end_date: date,
+    frequency: str = "monthly",
+    con=None,
+) -> list[dict]:
+    """
+    NAV series for one fund between two dates. Internal helper: the Sharpe
+    tools call this directly rather than round-tripping through the MCP tool,
+    so a 36-point series costs one query instead of 36.
+
+    frequency:
+        "daily"   -> every NAV in the window.
+        "monthly" -> one point per calendar month, the latest NAV ON OR BEFORE
+                     that month's end. Month-ends land on weekends and holidays,
+                     so snapping backwards to the last traded day is what AMCs
+                     do; it also matches the "before" snap _resolve_window
+                     already uses, keeping this consistent with get_fund_returns.
+
+    Returns oldest-first [{nav_date, nav}, ...]. An empty list means no NAV in
+    the window, which the caller must distinguish from a bad scheme_code.
+    """
+    con = con or _db()
+    freq = (frequency or "monthly").lower().strip()
+
+    if freq == "daily":
+        rows = con.execute(
+            """SELECT nav_date, nav FROM nav_history
+               WHERE scheme_code = ? AND nav_date BETWEEN ? AND ?
+               ORDER BY nav_date""",
+            [scheme_code, start_date, end_date],
+        ).fetchall()
+    elif freq == "monthly":
+        # One row per (year, month): the last NAV in that month. Because the
+        # window is bounded by end_date, the final month yields the latest NAV
+        # on or before it rather than a future one.
+        rows = con.execute(
+            """SELECT nav_date, nav FROM nav_history
+               WHERE scheme_code = ? AND nav_date BETWEEN ? AND ?
+               QUALIFY ROW_NUMBER() OVER (
+                   PARTITION BY date_trunc('month', nav_date)
+                   ORDER BY nav_date DESC) = 1
+               ORDER BY nav_date""",
+            [scheme_code, start_date, end_date],
+        ).fetchall()
+    else:
+        raise ValueError(
+            f"frequency must be 'daily' or 'monthly', got {frequency!r}.")
+
+    return [{"nav_date": r[0], "nav": r[1]} for r in rows]
+
+
+@mcp.tool()
+def get_fund_nav_history(
+    scheme_code: str,
+    start_date: str,
+    end_date: str,
+    frequency: str = "monthly",
+) -> dict:
+    """A fund's NAV series between two dates, as a list of points.
+
+    The returns tools answer "what did this fund do between A and B" with a
+    single number. This returns the whole path instead, which is what any
+    series-based measure needs: volatility, rolling returns, drawdowns.
+
+    Monthly frequency gives one point per calendar month — the last NAV on or
+    before each month-end, since month-ends fall on weekends and holidays. That
+    is the convention AMCs use for the "36 monthly data points" behind Std Dev
+    and Sharpe, and it matches how get_fund_returns snaps its own windows.
+
+    Points are oldest-first. The series is bounded by the fund's own data, so
+    a window starting before inception simply begins later — check
+    `requested_start` against `start_nav_date` rather than assuming coverage.
+
+    Args:
+        scheme_code: Fund scheme code (from search_funds).
+        start_date: ISO date, YYYY-MM-DD.
+        end_date: ISO date, YYYY-MM-DD.
+        frequency: "monthly" (default) or "daily".
+    """
+    try:
+        s_date = date.fromisoformat(start_date)
+        e_date = date.fromisoformat(end_date)
+    except ValueError as exc:
+        return {"scheme_code": scheme_code, "error": f"Bad date: {exc}"}
+
+    if s_date > e_date:
+        return {"scheme_code": scheme_code,
+                "error": f"start_date {s_date} is after end_date {e_date}."}
+
+    con = _db()
+    meta = con.execute(
+        """SELECT scheme_name, fund_house, category
+           FROM scheme_master WHERE scheme_code = ?""",
+        [scheme_code],
+    ).fetchone()
+    if not meta:
+        return {"scheme_code": scheme_code,
+                "error": f"Unknown scheme_code '{scheme_code}'. "
+                         "Use search_funds to resolve a fund name."}
+
+    try:
+        series = _nav_series(scheme_code, s_date, e_date, frequency, con=con)
+    except ValueError as exc:
+        return {"scheme_code": scheme_code, "error": str(exc)}
+
+    return {
+        "scheme_code": scheme_code,
+        "scheme_name": meta[0],
+        "fund_house": meta[1],
+        "category": meta[2],
+        "frequency": (frequency or "monthly").lower().strip(),
+        "requested_start": str(s_date),
+        "requested_end": str(e_date),
+        "start_nav_date": str(series[0]["nav_date"]) if series else None,
+        "end_nav_date": str(series[-1]["nav_date"]) if series else None,
+        "count": len(series),
+        "series": [{"nav_date": str(p["nav_date"]), "nav": p["nav"]}
+                   for p in series],
+    }
+
+
+def _load_risk_free_rates() -> dict:
+    """
+    {month_end_iso: rate_pct} from data/risk_free_rates.json.
+
+    Kept as data rather than a constant because the rate is itself as-of a date:
+    AMCs use the 1-day MIBOR as of the factsheet's month-end, so a Sharpe only
+    reproduces when the rate and the NAV window describe the SAME month. A
+    hardcoded default would silently go stale and pair, say, a December window
+    with a July rate.
+    """
+    if not os.path.exists(RISK_FREE_RATES_PATH):
+        sys.stderr.write(
+            f"NAV MCP: risk-free rates not found at {RISK_FREE_RATES_PATH}; "
+            "get_sharpe_ratio will require risk_free_rate_pct to be passed.\n")
+        return {}
+    try:
+        import json as _json
+        with open(RISK_FREE_RATES_PATH, encoding="utf-8") as fh:
+            return (_json.load(fh) or {}).get("rates") or {}
+    except Exception as exc:
+        sys.stderr.write(f"NAV MCP: could not read risk-free rates: {exc}\n")
+        return {}
+
+
+RISK_FREE_RATES = _load_risk_free_rates()
+
+
+def _month_end(d: date) -> date:
+    """Last calendar day of d's month."""
+    import calendar
+    return date(d.year, d.month, calendar.monthrange(d.year, d.month)[1])
+
+
+def _annualized_std_dev_pct(monthly_returns_pct: list[float]) -> float:
+    """Sample std dev (ddof=1) of monthly returns, scaled by sqrt(12)."""
+    if len(monthly_returns_pct) < 2:
+        raise ValueError("Need at least 2 monthly returns to compute std dev.")
+    return statistics.stdev(monthly_returns_pct) * (12 ** 0.5)
+
+
+def _cagr_from_monthly_returns(monthly_returns_pct: list[float]) -> float:
+    """Compound monthly returns, then annualize over the series length."""
+    growth = 1.0
+    for r in monthly_returns_pct:
+        growth *= (1 + r / 100.0)
+    return (growth ** (1 / (len(monthly_returns_pct) / 12.0)) - 1) * 100.0
+
+
+@mcp.tool()
+def fund_risk_data(
+    scheme_codes: Union[str, list[str]],
+    as_of: Optional[str] = None,
+    risk_free_rate_pct: Optional[float] = None,
+    n_months: int = 36,
+) -> dict:
+    """Risk metrics for one or many funds, as published on factsheets.
+
+    Returns, per fund, over a trailing 3-year window:
+      - std_dev_pct    annualized standard deviation (volatility)
+      - sharpe_ratio   (CAGR - risk-free rate) / std_dev
+
+    The CAGR feeding the Sharpe is computed internally but not returned — use
+    get_fund_returns for returns, so there is one source of truth for them.
+
+    Everything is derived here from a monthly NAV series — the AMC methodology
+    of "last 36 monthly data points" — rather than taken on trust. Verified
+    against a published factsheet: Bandhan Large Cap (108799) at as_of
+    2026-07-31 gives Std Dev 14.895 and Sharpe 0.476, matching the published
+    14.90 and 0.476. Both are rounded to 3dp.
+
+    THE AS-OF DATE MATTERS. The risk-free rate is itself dated (AMCs use the
+    1-day MIBOR at the factsheet's month-end), so the rate and the NAV window
+    must describe the same month or the result silently mixes two moments.
+
+    EXPECT A LAG, AND DO NOT CALL IT STALE. The rate is read off factsheets,
+    which publish mid-month for the month just ended, so the newest rate on file
+    normally trails the newest NAV by about a month. The default `as_of` is
+    therefore the latest month-end WE HOLD A RATE FOR, not the latest NAV month
+    - in early September that means an as_of of 31 July, which is correct and is
+    exactly the factsheet being reproduced. Pass `as_of` to pin a specific one.
+
+    Interpretation: lower std_dev means a smoother ride; higher sharpe means
+    more return per unit of volatility. A fund with the better CAGR can still
+    score worse on Sharpe if it got there with bigger swings. Only compare
+    across funds computed at the same as_of.
+
+    Args:
+        scheme_codes: A scheme_code or list of them (from search_funds).
+        as_of: Month-end to anchor on, ISO YYYY-MM-DD. Defaults to the newest
+            month-end present in risk_free_rates.json. Snapped to month-end.
+        risk_free_rate_pct: Percentage, e.g. 5.41. Defaults to the rate stored
+            for as_of in data/risk_free_rates.json; required if that month has
+            no entry.
+        n_months: Number of monthly RETURNS in the window (default 36, the AMC
+            standard). Needs n_months+1 NAV points, so a fund with a shorter
+            history returns an error rather than a non-comparable figure.
+    """
+    codes = [scheme_codes] if isinstance(scheme_codes, str) else list(scheme_codes)
+    if not codes:
+        return {"error": "Pass at least one scheme_code."}
+    if n_months < 12:
+        return {"error": f"n_months must be at least 12 to annualize "
+                         f"meaningfully, got {n_months}."}
+
+    con = _db()
+
+    # Anchor: an explicit as_of wins, else the newest month-end WE HAVE A RATE
+    # FOR. Deliberately not the newest NAV month: the rate comes from factsheets,
+    # which publish mid-month for the month just ended, so the rates file trails
+    # the NAV data by roughly a month every month. Anchoring on NAV would send
+    # the default path looking for a rate that does not exist yet and error for
+    # ~2 weeks out of every 4. The rate is the scarcer input, so it sets the
+    # window; adding the next month's line to risk_free_rates.json moves the
+    # anchor forward on its own, no code change.
+    if as_of:
+        try:
+            anchor = _month_end(date.fromisoformat(as_of))
+        except ValueError as exc:
+            return {"error": f"Bad as_of date: {exc}"}
+    else:
+        if not RISK_FREE_RATES:
+            return {"error": f"No risk-free rates on file at "
+                             f"{RISK_FREE_RATES_PATH}; pass as_of and "
+                             f"risk_free_rate_pct explicitly."}
+        anchor = date.fromisoformat(max(RISK_FREE_RATES))
+
+    rf = risk_free_rate_pct
+    rf_source = "caller"
+    if rf is None:
+        rf = RISK_FREE_RATES.get(str(anchor))
+        rf_source = "risk_free_rates.json"
+    if rf is None:
+        return {
+            "error": f"No risk-free rate on file for {anchor}. Add it to "
+                     f"{RISK_FREE_RATES_PATH} or pass risk_free_rate_pct.",
+            "as_of": str(anchor),
+            "latest_rate_on_file": max(RISK_FREE_RATES) if RISK_FREE_RATES else None,
+            "rates_available": sorted(RISK_FREE_RATES, reverse=True)[:6],
+        }
+
+    # Window start: far enough back to cover n_months+1 month-ends.
+    start = _month_end(anchor - relativedelta(months=n_months + 1))
+
+    results = []
+    for code in codes:
+        meta = con.execute(
+            "SELECT scheme_name FROM scheme_master WHERE scheme_code = ?",
+            [code]).fetchone()
+        if not meta:
+            results.append({"scheme_code": code, "error": "Unknown scheme_code."})
+            continue
+
+        series = _nav_series(code, start, anchor, "monthly", con=con)
+        if len(series) < n_months + 1:
+            results.append({
+                "scheme_code": code, "scheme_name": meta[0],
+                "error": f"Needs {n_months + 1} monthly NAV points, has "
+                         f"{len(series)}. Fund history is too short for a "
+                         f"{n_months}-month Sharpe.",
+            })
+            continue
+
+        pts = series[-(n_months + 1):]          # exactly n_months returns
+        navs = [p["nav"] for p in pts]
+        rets = [(navs[i + 1] / navs[i] - 1) * 100.0 for i in range(len(navs) - 1)]
+
+        try:
+            sd = _annualized_std_dev_pct(rets)
+            cagr = _cagr_from_monthly_returns(rets)
+        except (ValueError, ZeroDivisionError) as exc:
+            results.append({"scheme_code": code, "scheme_name": meta[0],
+                            "error": str(exc)})
+            continue
+
+        if sd <= 0:
+            results.append({
+                "scheme_code": code, "scheme_name": meta[0],
+                "error": "Zero volatility over the window; Sharpe undefined.",
+            })
+            continue
+
+        results.append({
+            "scheme_code": code,
+            "scheme_name": meta[0],
+            "std_dev_pct": round(sd, 3),
+            "sharpe_ratio": round((cagr - rf) / sd, 3),
+            "window_start": str(pts[0]["nav_date"]),
+            "window_end": str(pts[-1]["nav_date"]),
+            "months_used": len(rets),
+        })
+
+    return {
+        "as_of": str(anchor),
+        "risk_free_rate_pct": rf,
+        "risk_free_rate_source": rf_source,
+        "n_months": n_months,
+        "count": len(results),
+        "results": results,
     }
 
 

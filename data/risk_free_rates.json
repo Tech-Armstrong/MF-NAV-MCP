@@ -1,0 +1,8 @@
+{
+  "_comment": "Month-end risk-free rates used as the Sharpe Ratio denominator's subtrahend. Indian AMCs use the 1-day MIBOR / FBIL Overnight rate as of the factsheet's as-of date, so a Sharpe is only reproducible when the rate and the NAV window describe the SAME month-end. Keyed by month-end ISO date; values are percentages (5.41 means 5.41%).",
+  "_source": "FBIL Overnight MIBOR, published at https://www.fbil.org.in — record the published month-end value here as each month closes.",
+  "_verified": "2026-07-31 = 5.41 reproduces Bandhan Large Cap (108799) factsheet Sharpe 0.476 exactly (CAGR 12.4989 vs 12.4958, StdDev 14.8949 vs 14.90).",
+  "rates": {
+    "2026-07-31": 5.41
+  }
+}

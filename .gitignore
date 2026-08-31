@@ -34,6 +34,11 @@ data/*
 # categories are added this moves to Azure Blob as parquet, like the NAV data.
 !data/fund_holdings.json
 
+# Month-end risk-free rates (1-day MIBOR) for the Sharpe denominator in
+# fund_risk_data. Tiny, hand-maintained from factsheets, and the tool errors
+# without it, so it must ship with the code.
+!data/risk_free_rates.json
+
 # Local pipeline staging / logs (SIF pipeline, if you build it out)
 sif/data/
 logs/
