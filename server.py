@@ -1284,6 +1284,154 @@ def get_fund_holdings_profile(
     return out
 
 
+def _full_stock_holdings(prof: dict) -> dict:
+    """
+    Full per-stock holdings for a fund, keyed by ISIN.
+
+    `top_holdings` on the profile is truncated (top 10); the complete list is
+    the union of `sectors[*].holdings`, which together account for exactly
+    `holding_count` entries. Entries without an ISIN (see `unmatched`) can't be
+    compared across funds, so they are excluded here — callers get `unmatched_pct`
+    from get_fund_holdings_profile if they need to know how much was dropped.
+
+    Returns {isin: {"stock", "amfi_name", "weight_pct", "industry", "market_cap_cat"}}.
+    A stock appearing in more than one sector bucket (shouldn't happen, but the
+    data is enricher output, not a guarantee) keeps the higher weight.
+    """
+    by_isin: dict = {}
+    for sector in (prof.get("sectors") or {}).values():
+        for h in sector.get("holdings") or []:
+            isin = h.get("isin")
+            if not isin:
+                continue
+            existing = by_isin.get(isin)
+            if existing is None or (h.get("weight_pct") or 0) > existing["weight_pct"]:
+                by_isin[isin] = {
+                    "stock": h.get("stock"),
+                    "amfi_name": h.get("amfi_name"),
+                    "weight_pct": h.get("weight_pct") or 0,
+                    "industry": h.get("industry"),
+                    "market_cap_cat": h.get("market_cap_cat"),
+                }
+    return by_isin
+
+
+@mcp.tool()
+def get_portfolio_overlap(fund_names: Union[str, list[str]]) -> dict:
+    """Compute stock-level portfolio overlap across two or more funds.
+
+    Answers "how much do these funds duplicate each other's holdings?" — useful
+    before adding a fund to a portfolio that already holds similar ones.
+
+    Overlap between any two funds A and B is the sum, over every stock held by
+    both, of min(weight_in_A, weight_in_B) — the standard "overlap %" definition
+    used by portfolio-overlap tools, capped at 100. Weights are % of the whole
+    portfolio (same convention as get_fund_holdings_profile), so overlap is
+    naturally reduced by cash/derivatives exposure and any unmatched holdings.
+
+    Pass 2+ fund names (scheme_name from search_funds, or unique partials).
+    Returns:
+        - pairwise: overlap %% and shared holding count for every fund pair
+        - common_holdings: stocks held by ALL requested funds, with each fund's
+          weight and the min-weight contribution
+        - not_found: any input names that couldn't be resolved to holdings data
+    Funds without holdings data (see list_funds_with_holdings) are skipped and
+    reported in not_found rather than raising, so a mixed valid/invalid list
+    still returns overlap for the funds that resolved.
+
+    Args:
+        fund_names: 2+ fund names/partials, e.g.
+            ["HDFC Flexicap", "Parag Parikh Flexi Cap", "Quant Flexi Cap"].
+    """
+    if isinstance(fund_names, str):
+        fund_names = [fund_names]
+    fund_names = [f for f in fund_names if f and f.strip()]
+    if len(fund_names) < 2:
+        raise ValueError("get_portfolio_overlap needs at least 2 fund names.")
+
+    if not _holdings_available():
+        raise ValueError(
+            "Fund holdings data is not loaded on this server. Generate it with "
+            "holdings_enricher/main.py --json and place it at "
+            f"{FUND_HOLDINGS_PATH}.")
+
+    resolved: dict[str, dict] = {}   # key -> {isin -> holding}
+    not_found = []
+    seen_keys = set()
+    for name in fund_names:
+        key, prof = _find_fund_holdings(name)
+        if not prof:
+            not_found.append(name)
+            continue
+        if key in seen_keys:
+            continue  # same fund requested twice under different aliases
+        seen_keys.add(key)
+        resolved[key] = _full_stock_holdings(prof)
+
+    fund_keys = list(resolved.keys())
+    if len(fund_keys) < 2:
+        return {
+            "funds_requested": fund_names,
+            "funds_compared": fund_keys,
+            "not_found": not_found,
+            "error": "Fewer than 2 requested funds have holdings data; "
+                     "overlap requires at least 2.",
+            "pairwise": [],
+            "common_holdings": [],
+        }
+
+    pairwise = []
+    for i in range(len(fund_keys)):
+        for j in range(i + 1, len(fund_keys)):
+            a_key, b_key = fund_keys[i], fund_keys[j]
+            a_hold, b_hold = resolved[a_key], resolved[b_key]
+            shared_isins = set(a_hold) & set(b_hold)
+            overlap_pct = sum(
+                min(a_hold[isin]["weight_pct"], b_hold[isin]["weight_pct"])
+                for isin in shared_isins
+            )
+            pairwise.append({
+                "fund_a": a_key,
+                "fund_b": b_key,
+                "overlap_pct": round(min(overlap_pct, 100.0), 2),
+                "shared_holding_count": len(shared_isins),
+                "fund_a_holding_count": len(a_hold),
+                "fund_b_holding_count": len(b_hold),
+            })
+    pairwise.sort(key=lambda p: p["overlap_pct"], reverse=True)
+
+    common_isins = set.intersection(*(set(h) for h in resolved.values()))
+    common_holdings = []
+    for isin in common_isins:
+        per_fund = {
+            key: resolved[key][isin]["weight_pct"] for key in fund_keys
+        }
+        sample = resolved[fund_keys[0]][isin]
+        common_holdings.append({
+            "isin": isin,
+            "stock": sample.get("stock"),
+            "amfi_name": sample.get("amfi_name"),
+            "industry": sample.get("industry"),
+            "market_cap_cat": sample.get("market_cap_cat"),
+            "weight_pct_by_fund": {k: round(v, 4) for k, v in per_fund.items()},
+            "min_weight_pct": round(min(per_fund.values()), 4),
+        })
+    common_holdings.sort(key=lambda c: c["min_weight_pct"], reverse=True)
+
+    return {
+        "funds_requested": fund_names,
+        "funds_compared": fund_keys,
+        "not_found": not_found,
+        "pairwise": pairwise,
+        "common_to_all_count": len(common_holdings),
+        "common_holdings": common_holdings,
+        "note": "overlap_pct = sum of min(weight_A, weight_B) over shared "
+                "holdings, as %% of whole portfolio. common_holdings lists "
+                "only stocks held by every requested fund; see pairwise for "
+                "2-fund overlaps within a larger list.",
+    }
+
+
 @mcp.tool()
 def list_funds_with_holdings() -> dict:
     """List the funds that have holdings/market-cap data available.
