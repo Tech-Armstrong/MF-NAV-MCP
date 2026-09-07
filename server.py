@@ -158,6 +158,24 @@ _INDEX_ALIASES = {
     "INDIAVIX": "INDIA_VIX",
 }
 
+# scheme_master.category -> default Beta benchmark ticker, used by
+# fund_risk_data when no explicit benchmark_ticker is passed. Keys are
+# UPPERCASE to match category values as stored (see list_categories()).
+#
+# Deliberately starts with just the three unambiguous cap-based categories —
+# each has one standard NIFTY-family benchmark that means the same thing
+# across every fund in it. Every other category (Large & Mid Cap, Multi Cap,
+# Flexi Cap, hybrids, debt, sectoral/thematic, FOF, ...) is left out on
+# purpose: guessing a benchmark for a category without one obvious answer is
+# worse than surfacing "no default benchmark for this category" and requiring
+# an explicit benchmark_ticker. Extend this map as more categories get a
+# confirmed standard benchmark.
+_CATEGORY_BENCHMARKS = {
+    "LARGE CAP": "NIFTY_100",
+    "MID CAP": "NIFTY_MIDCAP_150",
+    "SMALL CAP": "NIFTY_SMALLCAP_250",
+}
+
 _VALID_PERIODS = {
     "1W", "2W",
     "1M", "3M", "6M", "9M",
@@ -755,6 +773,49 @@ def _compute_index_returns(tickers: list[str], period: str,
         )
 
     return [results[t] for t in resolved]
+
+
+def _index_series(
+    ticker: str,
+    start_date: date,
+    end_date: date,
+    frequency: str = "monthly",
+    con=None,
+) -> list[dict]:
+    """
+    Index close series for one ticker between two dates. Index counterpart of
+    _nav_series — same "last point on/before each month-end" convention, so a
+    fund's monthly NAV series and a benchmark's monthly close series line up
+    month-for-month for Beta (Cov(fund, benchmark) / Var(benchmark)).
+
+    Returns oldest-first [{nav_date, close}, ...]. Ticker is expected already
+    resolved (see _resolve_ticker); an unknown ticker simply yields no rows.
+    """
+    con = con or _db()
+    freq = (frequency or "monthly").lower().strip()
+
+    if freq == "daily":
+        rows = con.execute(
+            """SELECT nav_date, close FROM index_history
+               WHERE ticker = ? AND nav_date BETWEEN ? AND ?
+               ORDER BY nav_date""",
+            [ticker, start_date, end_date],
+        ).fetchall()
+    elif freq == "monthly":
+        rows = con.execute(
+            """SELECT nav_date, close FROM index_history
+               WHERE ticker = ? AND nav_date BETWEEN ? AND ?
+               QUALIFY ROW_NUMBER() OVER (
+                   PARTITION BY date_trunc('month', nav_date)
+                   ORDER BY nav_date DESC) = 1
+               ORDER BY nav_date""",
+            [ticker, start_date, end_date],
+        ).fetchall()
+    else:
+        raise ValueError(
+            f"frequency must be 'daily' or 'monthly', got {frequency!r}.")
+
+    return [{"nav_date": r[0], "close": r[1]} for r in rows]
 
 
 # ── fund holdings profile (market cap / sector exposure) ───────────────────────
@@ -1611,6 +1672,35 @@ def _month_end(d: date) -> date:
     return date(d.year, d.month, calendar.monthrange(d.year, d.month)[1])
 
 
+# window label -> n_months, for fund_risk_data / index_risk_data's `window`
+# shortcut. "3Y"/"5Y" are the two AMC-standard trailing windows; n_months
+# stays available underneath for a non-standard length either tool still
+# accepts directly.
+_RISK_WINDOWS = {"3Y": 36, "5Y": 60}
+
+
+def _resolve_risk_windows(window: Optional[str], n_months: int) -> list[tuple[str, int]]:
+    """
+    Return [(label, n_months), ...] to compute, from the `window` shortcut.
+
+    window=None uses n_months as-is as before (label "custom" unless it
+    happens to match a known window, kept internal — n_months alone is still
+    the escape hatch for a length neither "3Y" nor "5Y" names). "3Y"/"5Y" map
+    to 36/60 regardless of n_months. "both" computes both windows in one call
+    (nested per-fund by label) rather than requiring two round trips.
+    """
+    if not window:
+        label = next((lbl for lbl, m in _RISK_WINDOWS.items() if m == n_months), "custom")
+        return [(label, n_months)]
+    w = window.strip().upper()
+    if w == "BOTH":
+        return [("3Y", 36), ("5Y", 60)]
+    if w in _RISK_WINDOWS:
+        return [(w, _RISK_WINDOWS[w])]
+    raise ValueError(
+        f"window must be '3Y', '5Y', 'both', or omitted, got {window!r}.")
+
+
 def _annualized_std_dev_pct(monthly_returns_pct: list[float]) -> float:
     """Sample std dev (ddof=1) of monthly returns, scaled by sqrt(12)."""
     if len(monthly_returns_pct) < 2:
@@ -1626,18 +1716,53 @@ def _cagr_from_monthly_returns(monthly_returns_pct: list[float]) -> float:
     return (growth ** (1 / (len(monthly_returns_pct) / 12.0)) - 1) * 100.0
 
 
+def _beta(fund_returns_pct: list[float], benchmark_returns_pct: list[float]) -> float:
+    """
+    Beta = Cov(fund, benchmark) / Var(benchmark), on month-for-month aligned
+    monthly returns — the same series length/window fund_risk_data already
+    uses for std_dev and Sharpe, so all three numbers describe one window.
+
+    Sample covariance/variance (ddof=1); scale is irrelevant to the ratio, so
+    computing on percentage points rather than decimals changes nothing.
+    """
+    if len(fund_returns_pct) != len(benchmark_returns_pct):
+        raise ValueError(
+            f"fund and benchmark return series must be the same length, got "
+            f"{len(fund_returns_pct)} vs {len(benchmark_returns_pct)}.")
+    if len(fund_returns_pct) < 2:
+        raise ValueError("Need at least 2 monthly returns to compute Beta.")
+
+    var_b = statistics.variance(benchmark_returns_pct)
+    if var_b == 0:
+        raise ValueError("Benchmark has zero variance over the window; Beta undefined.")
+    cov = statistics.covariance(fund_returns_pct, benchmark_returns_pct)
+    return cov / var_b
+
+
 @mcp.tool()
 def fund_risk_data(
     scheme_codes: Union[str, list[str]],
     as_of: Optional[str] = None,
     risk_free_rate_pct: Optional[float] = None,
     n_months: int = 36,
+    benchmark_ticker: Optional[str] = None,
+    window: Optional[str] = None,
 ) -> dict:
     """Risk metrics for one or many funds, as published on factsheets.
 
-    Returns, per fund, over a trailing 3-year window:
+    Returns, per fund (per window — see `window` below):
       - std_dev_pct    annualized standard deviation (volatility)
       - sharpe_ratio   (CAGR - risk-free rate) / std_dev
+      - beta           Cov(fund, benchmark) / Var(benchmark) — only when
+                       benchmark_ticker (or a category default) applies
+
+    WINDOW: pass window="3Y" (36 months, the default), "5Y" (60 months), or
+    "both" to get one result per fund at EACH window in a single call —
+    factsheets publish both, and this avoids two round trips. "both" nests
+    each fund's results under "3Y"/"5Y" keys instead of a flat dict (see
+    return shape below); a single window keeps today's flat shape. window
+    overrides n_months when given; pass n_months alone for a non-standard
+    trailing length (e.g. 12 months) — that always returns the flat shape.
 
     The CAGR feeding the Sharpe is computed internally but not returned — use
     get_fund_returns for returns, so there is one source of truth for them.
@@ -1659,10 +1784,33 @@ def fund_risk_data(
     - in early September that means an as_of of 31 July, which is correct and is
     exactly the factsheet being reproduced. Pass `as_of` to pin a specific one.
 
+    BETA'S BENCHMARK IS PER-FUND, NOT PER-CALL. Passing benchmark_ticker pins
+    every fund in the call to that one index — use this for an explicit
+    comparison. Leave it unset and each fund gets its OWN benchmark from its
+    scheme_master category (Large Cap -> NIFTY_100, Mid Cap -> NIFTY_MIDCAP_150,
+    Small Cap -> NIFTY_SMALLCAP_250), so mixing a large-cap and a mid-cap fund
+    in one call does not silently benchmark both against the same index. Only
+    those three categories have a default; anything else (Large & Mid Cap,
+    Multi Cap, Flexi Cap, hybrids, sectoral, ...) gets no beta unless you pass
+    benchmark_ticker explicitly. `category` and, when beta is present,
+    `benchmark_source` ("category_default" or "explicit") are in each result
+    so you can see what was actually used.
+
+    Only NIFTY-family tickers exist in this server's index data — there is no
+    BSE series, so a fund whose factsheet benchmarks against a BSE index (e.g.
+    BSE 100 TRI) gets a NIFTY proxy here, and the beta will not exactly
+    reproduce the factsheet's. Beta is computed on the SAME monthly window
+    used for std_dev/Sharpe (fund and benchmark are matched by calendar month,
+    so a month either side is missing simply drops from both series) and
+    omitted per-fund (with a beta_error) if that fund's benchmark lacks history
+    over the window.
+
     Interpretation: lower std_dev means a smoother ride; higher sharpe means
-    more return per unit of volatility. A fund with the better CAGR can still
-    score worse on Sharpe if it got there with bigger swings. Only compare
-    across funds computed at the same as_of.
+    more return per unit of volatility. beta < 1 means historically less
+    volatile than the benchmark, beta > 1 more. A fund with the better CAGR
+    can still score worse on Sharpe if it got there with bigger swings. Only
+    compare across funds computed at the same as_of, and for beta, only across
+    funds sharing the same benchmark_ticker in their result.
 
     Args:
         scheme_codes: A scheme_code or list of them (from search_funds).
@@ -1674,11 +1822,21 @@ def fund_risk_data(
         n_months: Number of monthly RETURNS in the window (default 36, the AMC
             standard). Needs n_months+1 NAV points, so a fund with a shorter
             history returns an error rather than a non-comparable figure.
+        benchmark_ticker: Optional index ticker (from list_indices) to compute
+            Beta against for EVERY fund in the call, e.g. "NIFTY_100". Omit to
+            auto-select per fund from its category (Large/Mid/Small Cap only;
+            other categories get no beta unless this is passed explicitly).
+        window: "3Y", "5Y", or "both". Omit to use n_months directly (default
+            36, i.e. 3Y).
     """
     codes = [scheme_codes] if isinstance(scheme_codes, str) else list(scheme_codes)
     if not codes:
         return {"error": "Pass at least one scheme_code."}
-    if n_months < 12:
+    try:
+        windows = _resolve_risk_windows(window, n_months)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    if any(m < 12 for _, m in windows):
         return {"error": f"n_months must be at least 12 to annualize "
                          f"meaningfully, got {n_months}."}
 
@@ -1718,64 +1876,359 @@ def fund_risk_data(
             "rates_available": sorted(RISK_FREE_RATES, reverse=True)[:6],
         }
 
-    # Window start: far enough back to cover n_months+1 month-ends.
-    start = _month_end(anchor - relativedelta(months=n_months + 1))
+    def _compute_for(m: int) -> list[dict]:
+        """Everything below is the original single-window computation,
+        unchanged, just parameterized by m (n_months) so it can run once per
+        requested window instead of assuming n_months from the outer scope."""
+        # Window start: far enough back to cover m+1 month-ends.
+        start = _month_end(anchor - relativedelta(months=m + 1))
 
-    results = []
-    for code in codes:
-        meta = con.execute(
-            "SELECT scheme_name FROM scheme_master WHERE scheme_code = ?",
-            [code]).fetchone()
-        if not meta:
-            results.append({"scheme_code": code, "error": "Unknown scheme_code."})
-            continue
+        # Per-ticker benchmark series cache: with auto-selection, funds in the
+        # same call can land on different benchmarks (Large Cap -> NIFTY_100,
+        # Mid Cap -> NIFTY_MIDCAP_150, ...), but funds sharing a category share
+        # a ticker, so fetch each ticker's series at most once rather than once
+        # per fund. Value is (bench_by_date, error) — bench_by_date keyed by
+        # (year, month), not exact nav_date: funds and indices can strike their
+        # last value of the month on different trading days (different
+        # holiday/closure calendars), even though both sides already
+        # independently snap to "last point on/before month-end". Matching on
+        # calendar month is what actually pairs the same month's fund NAV with
+        # the same month's benchmark close.
+        bench_cache: dict[str, tuple[dict, Optional[str]]] = {}
 
-        series = _nav_series(code, start, anchor, "monthly", con=con)
-        if len(series) < n_months + 1:
-            results.append({
-                "scheme_code": code, "scheme_name": meta[0],
-                "error": f"Needs {n_months + 1} monthly NAV points, has "
-                         f"{len(series)}. Fund history is too short for a "
-                         f"{n_months}-month Sharpe.",
-            })
-            continue
+        def _get_benchmark(ticker: str) -> tuple[dict, Optional[str]]:
+            resolved = _resolve_ticker(ticker)
+            if resolved in bench_cache:
+                return bench_cache[resolved]
+            if not _index_available():
+                result = ({}, "No index data loaded on this server.")
+            else:
+                bench_series = _index_series(resolved, start, anchor, "monthly", con=con)
+                if len(bench_series) < m + 1:
+                    result = ({}, f"Benchmark '{resolved}' has {len(bench_series)} monthly "
+                                  f"points over the window, needs {m + 1}. Use "
+                                  f"list_indices() to check its coverage.")
+                else:
+                    by_date = {
+                        (p["nav_date"].year, p["nav_date"].month): p["close"]
+                        for p in bench_series
+                    }
+                    result = (by_date, None)
+            bench_cache[resolved] = result
+            return result
 
-        pts = series[-(n_months + 1):]          # exactly n_months returns
-        navs = [p["nav"] for p in pts]
-        rets = [(navs[i + 1] / navs[i] - 1) * 100.0 for i in range(len(navs) - 1)]
+        results = []
+        for code in codes:
+            meta = con.execute(
+                "SELECT scheme_name, category FROM scheme_master WHERE scheme_code = ?",
+                [code]).fetchone()
+            if not meta:
+                results.append({"scheme_code": code, "error": "Unknown scheme_code."})
+                continue
+            scheme_name, category = meta
 
-        try:
-            sd = _annualized_std_dev_pct(rets)
-            cagr = _cagr_from_monthly_returns(rets)
-        except (ValueError, ZeroDivisionError) as exc:
-            results.append({"scheme_code": code, "scheme_name": meta[0],
-                            "error": str(exc)})
-            continue
+            # Explicit benchmark_ticker always wins (and applies to every fund
+            # in the call, as before). Otherwise auto-select from the fund's
+            # own category, so a mixed Large Cap + Mid Cap batch gets each fund
+            # its own correct benchmark instead of silently sharing one.
+            fund_benchmark = benchmark_ticker
+            auto_selected = False
+            if not fund_benchmark and category:
+                fund_benchmark = _CATEGORY_BENCHMARKS.get(category.strip().upper())
+                auto_selected = fund_benchmark is not None
 
-        if sd <= 0:
-            results.append({
-                "scheme_code": code, "scheme_name": meta[0],
-                "error": "Zero volatility over the window; Sharpe undefined.",
-            })
-            continue
+            series = _nav_series(code, start, anchor, "monthly", con=con)
+            if len(series) < m + 1:
+                results.append({
+                    "scheme_code": code, "scheme_name": scheme_name,
+                    "error": f"Needs {m + 1} monthly NAV points, has "
+                             f"{len(series)}. Fund history is too short for a "
+                             f"{m}-month Sharpe.",
+                })
+                continue
 
-        results.append({
-            "scheme_code": code,
-            "scheme_name": meta[0],
-            "std_dev_pct": round(sd, 3),
-            "sharpe_ratio": round((cagr - rf) / sd, 3),
-            "window_start": str(pts[0]["nav_date"]),
-            "window_end": str(pts[-1]["nav_date"]),
-            "months_used": len(rets),
-        })
+            pts = series[-(m + 1):]          # exactly m returns
+            navs = [p["nav"] for p in pts]
+            rets = [(navs[i + 1] / navs[i] - 1) * 100.0 for i in range(len(navs) - 1)]
+
+            try:
+                sd = _annualized_std_dev_pct(rets)
+                cagr = _cagr_from_monthly_returns(rets)
+            except (ValueError, ZeroDivisionError) as exc:
+                results.append({"scheme_code": code, "scheme_name": scheme_name,
+                                "error": str(exc)})
+                continue
+
+            if sd <= 0:
+                results.append({
+                    "scheme_code": code, "scheme_name": scheme_name,
+                    "error": "Zero volatility over the window; Sharpe undefined.",
+                })
+                continue
+
+            row = {
+                "scheme_code": code,
+                "scheme_name": scheme_name,
+                "category": category,
+                "std_dev_pct": round(sd, 3),
+                "sharpe_ratio": round((cagr - rf) / sd, 3),
+                "window_start": str(pts[0]["nav_date"]),
+                "window_end": str(pts[-1]["nav_date"]),
+                "months_used": len(rets),
+            }
+
+            if fund_benchmark:
+                bench_by_date, bench_error = _get_benchmark(fund_benchmark)
+                if bench_error:
+                    row["beta_error"] = bench_error
+                else:
+                    # Align on nav_date, not position: a fund's month-end dates
+                    # and the benchmark's need not fall on exactly the same
+                    # calendar day (e.g. index closed on a day the fund's AMC
+                    # still struck a NAV, or vice versa), and each side already
+                    # snaps independently to "last point on/before month-end".
+                    # Keep only the fund month-ends that have a matching
+                    # benchmark close, in order, then difference THAT reduced
+                    # series — so both a dropped month-end and the interval on
+                    # either side of it are excluded from both series together,
+                    # keeping fund/benchmark returns pairwise aligned to the
+                    # same NAV interval.
+                    aligned = [
+                        (p["nav_date"], p["nav"], bench_by_date[(p["nav_date"].year, p["nav_date"].month)])
+                        for p in pts
+                        if (p["nav_date"].year, p["nav_date"].month) in bench_by_date
+                    ]
+                    if len(aligned) < m + 1:
+                        row["beta_error"] = (
+                            f"Only {len(aligned)} of {m + 1} fund month-ends "
+                            f"have a matching benchmark close; too many gaps to align.")
+                    else:
+                        fund_rets = [
+                            (aligned[i + 1][1] / aligned[i][1] - 1) * 100.0
+                            for i in range(len(aligned) - 1)
+                        ]
+                        bench_rets = [
+                            (aligned[i + 1][2] / aligned[i][2] - 1) * 100.0
+                            for i in range(len(aligned) - 1)
+                        ]
+                        try:
+                            row["beta"] = round(_beta(fund_rets, bench_rets), 3)
+                            row["benchmark_ticker"] = _resolve_ticker(fund_benchmark)
+                            row["benchmark_source"] = "category_default" if auto_selected else "explicit"
+                        except ValueError as exc:
+                            row["beta_error"] = str(exc)
+
+            results.append(row)
+
+        return results
+
+    windowed = {label: _compute_for(m) for label, m in windows}
+
+    if len(windows) == 1:
+        # Single window: same flat shape as before window/_resolve_risk_windows
+        # existed, so a caller passing plain n_months (no window) sees no
+        # change at all.
+        (label, m), = windows
+        return {
+            "as_of": str(anchor),
+            "risk_free_rate_pct": rf,
+            "risk_free_rate_source": rf_source,
+            "n_months": m,
+            "window": label,
+            "count": len(windowed[label]),
+            "results": windowed[label],
+        }
 
     return {
         "as_of": str(anchor),
         "risk_free_rate_pct": rf,
         "risk_free_rate_source": rf_source,
-        "n_months": n_months,
-        "count": len(results),
-        "results": results,
+        "windows": {label: m for label, m in windows},
+        "count": {label: len(rows) for label, rows in windowed.items()},
+        "results": windowed,
+    }
+
+
+@mcp.tool()
+def index_risk_data(
+    tickers: Union[str, list[str]],
+    as_of: Optional[str] = None,
+    risk_free_rate_pct: Optional[float] = None,
+    n_months: int = 36,
+    window: Optional[str] = None,
+) -> dict:
+    """Risk metrics for one or many indices — the benchmark-side counterpart
+    of fund_risk_data.
+
+    Returns, per index (per window — see `window` below):
+      - std_dev_pct    annualized standard deviation of the index's own
+                       monthly returns (volatility)
+      - sharpe_ratio   (CAGR - risk-free rate) / std_dev, on the index's own
+                       returns — how the benchmark itself would have scored
+                       if it were a fund
+
+    Same methodology as fund_risk_data: "last 36 monthly data points" (last
+    close on/before each month-end), sample std dev (ddof=1) annualized by
+    sqrt(12), CAGR compounded from the same monthly series. Use this to see
+    what a fund's std_dev/sharpe_ratio (from fund_risk_data) is actually being
+    measured against, or to compare a fund's Beta-input benchmark's own risk
+    profile across indices.
+
+    WINDOW: pass window="3Y" (36 months, the default), "5Y" (60 months), or
+    "both" to get one result per index at EACH window in a single call. "both"
+    nests each index's results under "3Y"/"5Y" keys instead of a flat dict
+    (same shape fund_risk_data uses); a single window keeps the flat shape.
+    window overrides n_months when given; pass n_months alone for a
+    non-standard trailing length.
+
+    THE AS-OF DATE MATTERS, same as fund_risk_data: the risk-free rate is
+    dated (AMCs use the 1-day MIBOR at the factsheet's month-end), so the rate
+    and the NAV window must describe the same month. The default `as_of` is
+    the latest month-end WE HOLD A RATE FOR (see data/risk_free_rates.json),
+    not the latest index close — pass `as_of` to pin a specific one.
+
+    Only NIFTY-family tickers exist in this server's index data — there is no
+    BSE series (list_indices() shows what is available).
+
+    Args:
+        tickers: An index ticker or list of them, e.g. "NIFTY_100" or
+            ["NIFTY_100", "NIFTY_MIDCAP_150"]. Aliases resolve the same way as
+            get_index_returns (see list_indices).
+        as_of: Month-end to anchor on, ISO YYYY-MM-DD. Defaults to the newest
+            month-end present in risk_free_rates.json. Snapped to month-end.
+        risk_free_rate_pct: Percentage, e.g. 5.41. Defaults to the rate stored
+            for as_of in data/risk_free_rates.json; required if that month has
+            no entry.
+        n_months: Number of monthly RETURNS in the window (default 36, the AMC
+            standard). Needs n_months+1 close points, so an index with a
+            shorter history returns an error rather than a non-comparable
+            figure.
+        window: "3Y", "5Y", or "both". Omit to use n_months directly (default
+            36, i.e. 3Y).
+    """
+    raw_tickers = [tickers] if isinstance(tickers, str) else list(tickers)
+    if not raw_tickers:
+        return {"error": "Pass at least one ticker."}
+    try:
+        windows = _resolve_risk_windows(window, n_months)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    if any(m < 12 for _, m in windows):
+        return {"error": f"n_months must be at least 12 to annualize "
+                         f"meaningfully, got {n_months}."}
+    if not _index_available():
+        return {"error": "No index data loaded on this server."}
+
+    con = _db()
+
+    # Same anchor/rate resolution as fund_risk_data — see the comment there for
+    # why the rate, not the newest close, sets the default as_of.
+    if as_of:
+        try:
+            anchor = _month_end(date.fromisoformat(as_of))
+        except ValueError as exc:
+            return {"error": f"Bad as_of date: {exc}"}
+    else:
+        if not RISK_FREE_RATES:
+            return {"error": f"No risk-free rates on file at "
+                             f"{RISK_FREE_RATES_PATH}; pass as_of and "
+                             f"risk_free_rate_pct explicitly."}
+        anchor = date.fromisoformat(max(RISK_FREE_RATES))
+
+    rf = risk_free_rate_pct
+    rf_source = "caller"
+    if rf is None:
+        rf = RISK_FREE_RATES.get(str(anchor))
+        rf_source = "risk_free_rates.json"
+    if rf is None:
+        return {
+            "error": f"No risk-free rate on file for {anchor}. Add it to "
+                     f"{RISK_FREE_RATES_PATH} or pass risk_free_rate_pct.",
+            "as_of": str(anchor),
+            "latest_rate_on_file": max(RISK_FREE_RATES) if RISK_FREE_RATES else None,
+            "rates_available": sorted(RISK_FREE_RATES, reverse=True)[:6],
+        }
+
+    resolved = list(dict.fromkeys(_resolve_ticker(t) for t in raw_tickers))
+    ph = ", ".join(["?"] * len(resolved))
+    meta_rows = con.execute(
+        f"SELECT ticker, index_name FROM index_master WHERE ticker IN ({ph})",
+        resolved,
+    ).fetchall()
+    meta = {r[0]: r[1] for r in meta_rows}
+
+    def _compute_for(m: int) -> list[dict]:
+        start = _month_end(anchor - relativedelta(months=m + 1))
+        results = []
+        for ticker in resolved:
+            if ticker not in meta:
+                results.append({
+                    "ticker": ticker,
+                    "error": f"Unknown ticker '{ticker}'. Use list_indices() to "
+                             "see available tickers.",
+                })
+                continue
+
+            series = _index_series(ticker, start, anchor, "monthly", con=con)
+            if len(series) < m + 1:
+                results.append({
+                    "ticker": ticker, "index_name": meta[ticker],
+                    "error": f"Needs {m + 1} monthly close points, has "
+                             f"{len(series)}. Index history is too short for a "
+                             f"{m}-month Sharpe.",
+                })
+                continue
+
+            pts = series[-(m + 1):]
+            closes = [p["close"] for p in pts]
+            rets = [(closes[i + 1] / closes[i] - 1) * 100.0 for i in range(len(closes) - 1)]
+
+            try:
+                sd = _annualized_std_dev_pct(rets)
+                cagr = _cagr_from_monthly_returns(rets)
+            except (ValueError, ZeroDivisionError) as exc:
+                results.append({"ticker": ticker, "index_name": meta[ticker], "error": str(exc)})
+                continue
+
+            if sd <= 0:
+                results.append({
+                    "ticker": ticker, "index_name": meta[ticker],
+                    "error": "Zero volatility over the window; Sharpe undefined.",
+                })
+                continue
+
+            results.append({
+                "ticker": ticker,
+                "index_name": meta[ticker],
+                "std_dev_pct": round(sd, 3),
+                "sharpe_ratio": round((cagr - rf) / sd, 3),
+                "window_start": str(pts[0]["nav_date"]),
+                "window_end": str(pts[-1]["nav_date"]),
+                "months_used": len(rets),
+            })
+        return results
+
+    windowed = {label: _compute_for(m) for label, m in windows}
+
+    if len(windows) == 1:
+        (label, m), = windows
+        return {
+            "as_of": str(anchor),
+            "risk_free_rate_pct": rf,
+            "risk_free_rate_source": rf_source,
+            "n_months": m,
+            "window": label,
+            "count": len(windowed[label]),
+            "results": windowed[label],
+        }
+
+    return {
+        "as_of": str(anchor),
+        "risk_free_rate_pct": rf,
+        "risk_free_rate_source": rf_source,
+        "windows": {label: m for label, m in windows},
+        "count": {label: len(rows) for label, rows in windowed.items()},
+        "results": windowed,
     }
 
 
