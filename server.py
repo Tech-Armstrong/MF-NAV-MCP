@@ -1739,6 +1739,39 @@ def _beta(fund_returns_pct: list[float], benchmark_returns_pct: list[float]) -> 
     return cov / var_b
 
 
+def _max_drawdown_pct(navs: list[float]) -> float:
+    """
+    Max peak-to-trough decline over the series, as a positive percentage.
+
+    Walks the same monthly NAV points std_dev/Sharpe/beta already use (not a
+    daily series), so it describes the same window as the rest of the row.
+    Running peak rather than a full O(n^2) scan: at each point the only
+    trough that can beat the current worst is the deepest drop from the
+    highest NAV seen so far.
+    """
+    if len(navs) < 2:
+        raise ValueError("Need at least 2 NAV points to compute Max Drawdown.")
+    peak = navs[0]
+    worst = 0.0
+    for nav in navs[1:]:
+        peak = max(peak, nav)
+        drawdown = (peak - nav) / peak * 100.0
+        worst = max(worst, drawdown)
+    return worst
+
+
+def _calmar_ratio(cagr_pct: float, max_drawdown_pct: float) -> float:
+    """Calmar = CAGR / Max Drawdown, both in percentage points.
+
+    Uses the same CAGR already computed for Sharpe (one source of truth per
+    window) rather than recomputing it. Undefined at zero drawdown, same as
+    Sharpe is undefined at zero volatility.
+    """
+    if max_drawdown_pct <= 0:
+        raise ValueError("Zero drawdown over the window; Calmar Ratio undefined.")
+    return cagr_pct / max_drawdown_pct
+
+
 @mcp.tool()
 def fund_risk_data(
     scheme_codes: Union[str, list[str]],
@@ -1751,10 +1784,16 @@ def fund_risk_data(
     """Risk metrics for one or many funds, as published on factsheets.
 
     Returns, per fund (per window — see `window` below):
-      - std_dev_pct    annualized standard deviation (volatility)
-      - sharpe_ratio   (CAGR - risk-free rate) / std_dev
-      - beta           Cov(fund, benchmark) / Var(benchmark) — only when
-                       benchmark_ticker (or a category default) applies
+      - std_dev_pct      annualized standard deviation (volatility)
+      - sharpe_ratio     (CAGR - risk-free rate) / std_dev
+      - beta             Cov(fund, benchmark) / Var(benchmark) — only when
+                         benchmark_ticker (or a category default) applies
+      - max_drawdown_pct largest peak-to-trough decline over the window's
+                         monthly NAVs, as a positive percentage
+      - calmar_ratio     CAGR / max_drawdown_pct — return earned per unit of
+                         worst-case decline, using the same CAGR as Sharpe.
+                         Omitted (with calmar_error) at zero drawdown, same
+                         as Sharpe is omitted at zero volatility.
 
     WINDOW: pass window="3Y" (36 months, the default), "5Y" (60 months), or
     "both" to get one result per fund at EACH window in a single call —
@@ -1976,6 +2015,17 @@ def fund_risk_data(
                 "window_end": str(pts[-1]["nav_date"]),
                 "months_used": len(rets),
             }
+
+            # Max Drawdown / Calmar: same monthly navs as everything else in
+            # this row, so it describes the same window. Soft-fail like beta
+            # (mdd_error) rather than dropping the fund entirely — std_dev and
+            # Sharpe above are still valid even if drawdown is degenerate.
+            try:
+                mdd = _max_drawdown_pct(navs)
+                row["max_drawdown_pct"] = round(mdd, 3)
+                row["calmar_ratio"] = round(_calmar_ratio(cagr, mdd), 3)
+            except ValueError as exc:
+                row["calmar_error"] = str(exc)
 
             if fund_benchmark:
                 bench_by_date, bench_error = _get_benchmark(fund_benchmark)
