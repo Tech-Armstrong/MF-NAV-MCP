@@ -303,24 +303,40 @@ def _build_connection() -> duckdb.DuckDBPyConnection:
         f"SELECT * FROM read_parquet({_lit(scheme_path)});"
     )
 
-    # Index benchmarks: committed local parquet, never Azure. Optional — if the
-    # files are absent the fund tools must still work, so the index views are
-    # simply not created and the index tools report the situation rather than
-    # the whole server failing to import.
-    if os.path.exists(INDEX_HISTORY_PATH) and os.path.exists(INDEX_MASTER_PATH):
+    # Index benchmarks: same az:// convention as the NAV data above when
+    # AZURE_CONN and an az:// path are configured; otherwise a plain local
+    # file, e.g. the parquet committed to the repo (see Index/parse_index_xlsx.py
+    # and scripts/index_refresh/refresh_index_history.py, which write to
+    # az://mfnavdata/processed/index_history/ and .../index_master/). Optional
+    # either way — if the files are absent the fund tools must still work, so
+    # the index views are simply not created and the index tools report the
+    # situation rather than the whole server failing to import.
+    index_hist_is_az = bool(AZURE_CONN) and re.match(r"^(az|azure)://", INDEX_HISTORY_PATH)
+    index_master_is_az = bool(AZURE_CONN) and re.match(r"^(az|azure)://", INDEX_MASTER_PATH)
+    try:
+        index_hist_path = _download_az_to_local(INDEX_HISTORY_PATH) if index_hist_is_az else INDEX_HISTORY_PATH
+        index_master_path = _download_az_to_local(INDEX_MASTER_PATH) if index_master_is_az else INDEX_MASTER_PATH
+        index_ready = os.path.exists(index_hist_path) and os.path.exists(index_master_path)
+    except Exception as exc:
+        sys.stderr.write(f"NAV MCP: index blob download failed: {exc}\n")
+        index_hist_path = index_master_path = None
+        index_ready = False
+
+    if index_ready:
         con.execute(
             f"CREATE OR REPLACE VIEW index_history AS "
-            f"SELECT * FROM read_parquet({_lit(INDEX_HISTORY_PATH)});"
+            f"SELECT * FROM read_parquet({_lit(index_hist_path)});"
         )
         con.execute(
             f"CREATE OR REPLACE VIEW index_master AS "
-            f"SELECT * FROM read_parquet({_lit(INDEX_MASTER_PATH)});"
+            f"SELECT * FROM read_parquet({_lit(index_master_path)});"
         )
     else:
         sys.stderr.write(
             "NAV MCP: index parquet not found at "
             f"{INDEX_HISTORY_PATH} / {INDEX_MASTER_PATH}; index tools will be "
-            "unavailable. Run `python Index/fetch_index_data.py` to create them.\n"
+            "unavailable. Run `python Index/parse_index_xlsx.py` to create them, "
+            "or set INDEX_HISTORY_PATH/INDEX_MASTER_PATH to az:// URIs.\n"
         )
     return con
 
@@ -351,7 +367,10 @@ def _db() -> duckdb.DuckDBPyConnection:
 
 def _blob_signature() -> Optional[tuple]:
     """
-    Cheap change-detector: (name, last_modified, size) for every NAV parquet.
+    Cheap change-detector: (name, last_modified, size) for every NAV AND index
+    parquet (the latter only when INDEX_HISTORY_PATH/INDEX_MASTER_PATH are
+    az:// URIs — a local/committed index parquet never changes without a
+    redeploy, so there is nothing in Blob to watch for it in that case).
     Returns None if the signature can't be read, which the caller treats as
     "don't know" and skips the refresh rather than risking a pointless download.
     """
@@ -360,7 +379,7 @@ def _blob_signature() -> Optional[tuple]:
     try:
         from azure.storage.blob import ContainerClient
         sig = []
-        for uri in (NAV_HISTORY_PATH, SCHEME_MASTER_PATH):
+        for uri in (NAV_HISTORY_PATH, SCHEME_MASTER_PATH, INDEX_HISTORY_PATH, INDEX_MASTER_PATH):
             if not re.match(r"^(az|azure)://", uri):
                 continue
             container, blob_path = _parse_az_uri(uri)
