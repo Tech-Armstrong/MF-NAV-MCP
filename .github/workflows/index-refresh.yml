@@ -1,0 +1,32 @@
+name: Index daily refresh
+
+# 13:30 UTC = 19:00 IST, once per weekday evening — NSE's daily snapshot for a
+# trading day is published a few hours after the 15:30 IST close.
+# GitHub Actions cron uses UTC always; no separate weekday filter is needed
+# because find_latest_report() (in refresh_index_history.py) already walks
+# backward over weekends/holidays — a Saturday/Sunday run just finds Friday's
+# report already present in Blob and no-ops.
+on:
+  schedule:
+    - cron: "30 13 * * *"
+  workflow_dispatch:        # manual "Run workflow" button, for on-demand testing
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/index_refresh/requirements.txt
+
+      - name: Run index refresh
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: python scripts/index_refresh/refresh_index_history.py
