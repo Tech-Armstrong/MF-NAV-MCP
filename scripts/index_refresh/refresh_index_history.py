@@ -167,7 +167,7 @@ def validate_and_read_csv(response: requests.Response) -> pd.DataFrame | None:
 
 
 def find_latest_report() -> tuple[date_cls | None, str | None, pd.DataFrame | None]:
-    current_date = datetime.today().date() - timedelta(days=1)
+    current_date = datetime.today().date()
 
     for days_back in range(MAX_DAYS_BACK + 1):
         check_date = current_date - timedelta(days=days_back)
