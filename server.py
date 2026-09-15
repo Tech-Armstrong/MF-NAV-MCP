@@ -2303,19 +2303,29 @@ def index_risk_data(
 
 @mcp.tool()
 def data_status() -> dict:
-    """Freshness of the NAV data this server is serving.
+    """Freshness of the NAV and index data this server is serving.
 
-    The parquet is downloaded from Blob at startup and refreshed periodically in
-    the background, so the numbers every other tool returns are anchored to the
-    snapshot described here. Call this to check how current the data is, or when
-    a fund/NAV you expect to exist seems to be missing.
+    Both parquet sets are downloaded from Blob at startup and refreshed
+    periodically in the background (same _LAST_RELOAD/_blob_signature cycle —
+    see _build_connection), so the numbers every other tool returns are
+    anchored to the snapshot described here. Call this to check how current
+    the data is, or when a fund/NAV/index you expect to exist seems to be
+    missing.
+
+    NAV and index data can each be genuinely absent independently: a fresh
+    local checkout with no index parquet built yet still serves fund tools
+    fine (see index_available), and conversely an index-only deployment
+    would serve index tools without NAV. `index` is omitted entirely (not a
+    null-filled stub) when index_history/index_master were never loaded, so
+    a caller can distinguish "no index data configured" from "index data is
+    stale" by checking whether the key exists at all.
     """
     con = _db()
     latest, earliest, schemes = con.execute(
         "SELECT max(nav_date), min(nav_date), count(DISTINCT scheme_code) "
         "FROM nav_history").fetchone()
     age_h = (_dt.datetime.now(_dt.timezone.utc) - _LAST_RELOAD).total_seconds() / 3600
-    return {
+    result = {
         "latest_nav_date": str(latest),
         "earliest_nav_date": str(earliest),
         "schemes": schemes,
@@ -2325,6 +2335,23 @@ def data_status() -> dict:
         "auto_refresh": bool(BLOB_REFRESH_SECONDS and AZURE_CONN),
         "source": "azure-blob" if AZURE_CONN else "local-parquet",
     }
+
+    if _index_available():
+        idx_latest, idx_earliest, tickers = con.execute(
+            "SELECT max(nav_date), min(nav_date), count(DISTINCT ticker) "
+            "FROM index_history").fetchone()
+        result["index"] = {
+            "latest_index_date": str(idx_latest),
+            "earliest_index_date": str(idx_earliest),
+            "tickers": tickers,
+            # Same snapshot/reload cycle as NAV data above — both live/reload
+            # together via _build_connection, so no separate timestamp exists.
+            "snapshot_loaded_at_utc": _LAST_RELOAD.strftime("%Y-%m-%d %H:%M:%SZ"),
+            "snapshot_age_hours": round(age_h, 2),
+            "source": "azure-blob" if (AZURE_CONN and re.match(r"^(az|azure)://", INDEX_HISTORY_PATH)) else "local-parquet",
+        }
+
+    return result
 
 
 @mcp.tool()
