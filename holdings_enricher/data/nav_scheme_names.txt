@@ -117,19 +117,24 @@ Small Cap|Union Small Cap Fund - Regular - Growth
 Small Cap|quant Small Cap Fund - Growth - Regular
 
 # Aggressive Hybrid — all 29 taken verbatim from scheme_master in Azure Blob
-# (category = 'AGGRESSIVE HYBRID'), not typed by hand.
-Aggressive Hybrid|Aditya Birla Sun Life Equity Hybrid '95 Fund - Regular - Growth
+# (category = 'AGGRESSIVE HYBRID'), not typed by hand. Refreshed 2026-09-16 —
+# 6 funds had been renamed in the NAV data since this block was first built
+# (same scheme_code, new scheme_name): Aditya Birla SL, Bank of India, Canara
+# Robeco, HDFC, ICICI Prudential and SBI all now carry "Aggressive Hybrid" in
+# their name instead of their old marketing name (Equity Hybrid '95, Mid &
+# Small Cap Equity & Debt, Equity Hybrid, Hybrid Equity, Equity & Debt).
+Aggressive Hybrid|Aditya Birla Sun Life Aggressive Hybrid Fund - Regular Plan - Growth
 Aggressive Hybrid|Axis Aggressive Hybrid Fund - Regular - Growth
-Aggressive Hybrid|BOI Mid & Small Cap Equity & Debt Fund - Regular - Growth
 Aggressive Hybrid|Bandhan Aggressive Hybrid Fund - Regular - Growth
-Aggressive Hybrid|Canara Robeco Equity Hybrid Fund - Regular - Growth
+Aggressive Hybrid|Bank of India Aggressive Hybrid Fund - Regular Plan - Growth
+Aggressive Hybrid|Canara Robeco Aggressive Hybrid Fund - Regular Plan - Growth
 Aggressive Hybrid|DSP Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Edelweiss Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Franklin India Aggressive Hybrid Fund - Growth
 Aggressive Hybrid|Groww Aggressive Hybrid Fund - Regular - Growth
-Aggressive Hybrid|HDFC Hybrid Equity Fund - Growth
+Aggressive Hybrid|HDFC Aggressive Hybrid Fund - Regular Plan - Growth
 Aggressive Hybrid|HSBC Aggressive Hybrid Fund - Regular Growth
-Aggressive Hybrid|ICICI Prudential Equity & Debt Fund - Growth
+Aggressive Hybrid|ICICI Prudential Aggressive Hybrid Fund - Regular Plan - Growth
 Aggressive Hybrid|Invesco India Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|JM Aggressive Hybrid Fund (Regular) - Growth
 Aggressive Hybrid|Kotak Aggressive Hybrid Fund - Regular - Growth
@@ -139,7 +144,7 @@ Aggressive Hybrid|Mirae Asset Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Navi Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Nippon India Aggressive Hybrid Fund - Growth
 Aggressive Hybrid|PGIM India Aggressive Hybrid Equity Fund - Growth
-Aggressive Hybrid|SBI Equity Hybrid Fund - Regular - Growth
+Aggressive Hybrid|SBI Aggressive Hybrid Fund - Regular Plan - Growth
 Aggressive Hybrid|Shriram Aggressive Hybrid Fund - Regular Growth
 Aggressive Hybrid|Sundaram Aggressive Hybrid Fund - Growth
 Aggressive Hybrid|Tata Aggressive Hybrid Fund - Regular - Growth
@@ -147,6 +152,7 @@ Aggressive Hybrid|UTI Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|Union Aggressive Hybrid Fund - Regular - Growth
 Aggressive Hybrid|WhiteOak Capital Aggressive Hybrid Fund Regular Growth
 Aggressive Hybrid|quant Aggressive Hybrid Fund - Growth - Regular
+Aggressive Hybrid|Baroda BNP Paribas Aggressive Hybrid Fund - Regular Plan - Growth
 
 # Large & Mid Cap — all 33 taken verbatim from scheme_master in Azure Blob
 # (category = 'LARGE & MID CAP'), not typed by hand.
@@ -318,7 +324,7 @@ Focused|Edelweiss Focused Fund - Regular - Growth
 Focused|Franklin India Focused Equity Fund - Growth
 Focused|HDFC Focused Fund - Growth
 Focused|HSBC Focused Fund - Regular Growth
-Focused|ICICI Pru Focused Equity Fund - Growth
+Focused|ICICI Prudential Focused Fund - Regular Plan - Growth
 Focused|ITI Focused Fund - Regular - Growth
 Focused|Invesco India Focused Fund - Regular - Growth
 Focused|JM Focused Fund (Regular) - Growth
@@ -522,3 +528,257 @@ Thematic Innovation|SBI Innovative Opportunities Fund - Regular - Growth
 Thematic Innovation|Tata India Innovation Fund - Regular - Growth
 Thematic Innovation|UTI Innovation Fund - Regular - Growth
 Thematic Innovation|Union Innovation & Opportunities Fund - Regular - Growth
+
+# Balanced Advantage — all 36 taken verbatim from scheme_master in Azure Blob
+# (category = 'BALANCED ADVANTAGE'), not typed by hand.
+
+Balanced Advantage|ABSL Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Axis Balanced Advantage Fund - Regular Plan - Growth
+Balanced Advantage|BOI Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Bajaj Finserv Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Bandhan Balanced Advantage Fund - Regular Plan - Growth
+Balanced Advantage|Baroda BNP Paribas Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Canara Robeco Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|DSP Dynamic Asset Allocation Fund - Regular Plan - Growth
+Balanced Advantage|Edelweiss Balanced Advantage Fund - Regular Plan - Growth Option
+Balanced Advantage|Franklin India Balanced Advantage Fund - Growth
+Balanced Advantage|HDFC Balanced Advantage Fund - Growth Plan
+Balanced Advantage|HSBC Balanced Advantage Fund - Regular Growth
+Balanced Advantage|Helios Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|ICICI Prudential Balanced Advantage Fund - Growth
+Balanced Advantage|ITI Balanced Advantage Fund - Regular Plan - Growth Option
+Balanced Advantage|Invesco India Balanced Advantage Fund - Regular Plan - Growth
+Balanced Advantage|Kotak Balanced Advantage Fund - Regular Plan - Growth Option
+Balanced Advantage|LIC MF Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Mahindra Manulife Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Mirae Asset Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Motilal Oswal Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|NJ Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Nippon India Balanced Advantage Fund - Growth Plan - Growth Option
+Balanced Advantage|PGIM India Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Parag Parikh Dynamic Asset Allocation Fund - Regular - Growth
+Balanced Advantage|SBI Balanced Advantage Fund - Regular Plan - Growth
+Balanced Advantage|Samco Dynamic Asset Allocation Fund - Regular Plan - Growth Option
+Balanced Advantage|Shriram Balanced Advantage Fund - Regular Growth
+Balanced Advantage|Sundaram Balanced Advantage Fund - Growth
+Balanced Advantage|Tata Balanced Advantage Fund - Regular Plan - Growth
+Balanced Advantage|The Wealth Company Balanced Advantage Fund - Regular Growth
+Balanced Advantage|UTI Balanced Advantage Fund - Regular - Growth
+Balanced Advantage|Unifi Dynamic Asset Allocation Fund - Regular Growth
+Balanced Advantage|Union Balanced Advantage Fund - Regular Plan - Growth Option
+Balanced Advantage|WhiteOak Capital Balanced Advantage Fund Regular Plan Growth
+Balanced Advantage|quant Dynamic Asset Allocation Fund - Growth - Regular
+
+# Conservative Hybrid — all 16 taken verbatim from scheme_master in Azure Blob
+# (category = 'CONSERVATIVE HYBRID'), not typed by hand. Refreshed 2026-09-16 —
+# same stale-name pattern found in Aggressive Hybrid: ABSL, DSP, HDFC, ICICI
+# Prudential and Kotak had been renamed in the NAV data since this block was
+# first built (same scheme_code, new scheme_name carrying "Conservative
+# Hybrid" instead of their old marketing name — Regular Savings Fund, Hybrid
+# Debt Fund, Debt Hybrid).
+
+Conservative Hybrid|Aditya Birla Sun Life Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Axis Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Bandhan Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Canara Robeco Conservative Hybrid Fund - Regular - Growth
+Conservative Hybrid|DSP Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Franklin India Conservative Hybrid Fund - Growth
+Conservative Hybrid|HDFC Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|HSBC Conservative Hybrid Fund - Regular Growth
+Conservative Hybrid|ICICI Prudential Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Kotak Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|LIC MF Conservative Hybrid Fund - Regular - Growth
+Conservative Hybrid|Nippon India Conservative Hybrid Fund - Growth
+Conservative Hybrid|Parag Parikh Conservative Hybrid Fund - Regular - Growth
+Conservative Hybrid|SBI Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Sundaram Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|UTI Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Baroda BNP Paribas Conservative Hybrid Fund - Regular Plan - Growth
+Conservative Hybrid|Bank of India Conservative Hybrid Fund - Regular Plan - Growth
+
+# Balanced Hybrid — all 5 taken verbatim from scheme_master in Azure Blob
+# (category = 'BALANCED HYBRID'), not typed by hand. This category did not
+# exist in NAV data when Balanced Hybrid.csv was first checked (2026-09-16);
+# it appeared after a background blob refresh added these 5 newly-launched
+# schemes (scheme_codes in the 152xxx-154xxx range).
+
+Balanced Hybrid|360 ONE Balanced Hybrid Fund - Regular Plan - Growth
+Balanced Hybrid|ICICI Prudential Balanced Hybrid Fund - Regular Plan - Growth
+Balanced Hybrid|SBI Balanced Hybrid Fund - Regular Plan - Growth
+Balanced Hybrid|UTI Balanced Hybrid Fund - Regular Plan - Growth
+Balanced Hybrid|WhiteOak Capital Balanced Hybrid Fund - Regular Plan - Growth
+
+# Transportation & Logistics — all 6 taken verbatim from scheme_master in
+# Azure Blob (category = 'THEMATIC TRANSPORTATION LOGISTICS'), not typed by
+# hand. SBI's "Automotive Opportunities Fund" (from the holdings source) has
+# no counterpart under any SBI scheme in NAV data — checked all 33 SBI funds
+# by category, none match — so it is excluded rather than aliased here.
+
+Transportation & Logistics|Aditya Birla Sun Life Transportation and Logistics Fund - Regular Plan - Growth
+Transportation & Logistics|Bandhan Transportation and Logistics Fund - Regular Plan - Growth
+Transportation & Logistics|HDFC Transportation and Logistics Fund - Regular Plan - Growth
+Transportation & Logistics|ICICI Prudential Transportation and Logistics Fund - Regular Plan - Growth
+Transportation & Logistics|Kotak Transportation & Logistics Fund - Regular Plan - Growth
+Transportation & Logistics|UTI - Transportation and Logistics Fund - Regular Plan - Growth
+
+# Thematic Special Opportunities — all 7 taken verbatim from scheme_master in
+# Azure Blob (category = 'THEMATIC SPECIAL OPPORTUNITIES'), not typed by hand.
+
+Thematic Special Opportunities|Aditya Birla Sun Life Special Opportunities Fund - Regular Plan - Growth
+Thematic Special Opportunities|Franklin India Opportunities Fund - Regular Plan - Growth
+Thematic Special Opportunities|ICICI Prudential India Opportunities Fund - Regular Plan - Cumulative
+Thematic Special Opportunities|Kotak Special Opportunities Fund - Regular Plan - Growth
+Thematic Special Opportunities|Motilal Oswal Special Opportunities Fund - Regular Plan - Growth
+Thematic Special Opportunities|Samco Special Opportunities Fund - Regular Plan - Growth
+Thematic Special Opportunities|WhiteOak Capital Special Opportunities Fund - Regular Plan - Growth
+
+# Thematic Business Conglomerate — all 2 taken verbatim from scheme_master in
+# Azure Blob (category = 'THEMATIC BUSINESS CONGLOMERATE'), not typed by hand.
+
+Thematic Business Conglomerate|Aditya Birla Sun Life Conglomerate Fund - Regular Plan - Growth
+Thematic Business Conglomerate|Baroda BNP Paribas Business Conglomerates Fund - Regular Plan - Growth
+
+# Thematic Others — all 7 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC OTHERS'), not typed by hand.
+
+Thematic Others|Bandhan Multi-Factor Fund - Regular - Growth
+Thematic Others|ICICI Prudential Conglomerate Fund - Growth
+Thematic Others|ICICI Prudential Quality Fund - Growth
+Thematic Others|ICICI Prudential Rural Opportunities Fund - Growth
+Thematic Others|Kotak Rural Opportunities Fund - Regular - Growth
+Thematic Others|Kotak Services Fund - Regular - Growth
+Thematic Others|Motilal Oswal Services Fund - Regular - Growth
+
+# Thematic International Equity — all 6 taken verbatim from scheme_master in
+# Azure Blob (category = 'THEMATIC INTERNATIONAL EQUITY'), not typed by hand.
+
+Thematic International Equity|Aditya Birla Sun Life International Equity Fund - Regular Plan - Growth
+Thematic International Equity|Franklin Asian Equity Fund - Regular Plan - Growth
+Thematic International Equity|ICICI Prudential US Bluechip Equity Fund - Regular Plan - Growth
+Thematic International Equity|Nippon India Japan Equity Fund - Regular Plan - Growth
+Thematic International Equity|Nippon India Taiwan Equity Fund - Regular Plan - Growth
+Thematic International Equity|Nippon India US Equity Opportunities Fund - Regular Plan - Growth
+
+# Thematic Services — all 2 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC SERVICES'), not typed by hand. Distinct from the
+# "Services" funds already in Thematic Others (Kotak, Motilal Oswal) — those
+# two carry a different NAV category despite the similar product name.
+
+Thematic Services|Baroda BNP Paribas Services Fund - Regular Plan - Growth
+Thematic Services|Sundaram Services Fund - Regular Plan - Growth
+Thematic Services|Axis Services Opportunities Fund - Regular Plan - Growth
+
+# Thematic Energy — all 7 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC ENERGY'), not typed by hand.
+
+Thematic Energy|Baroda BNP Paribas Energy Opportunities Fund - Regular - Growth
+Thematic Energy|DSP Natural Resources And New Energy Fund - Regular - Growth
+Thematic Energy|ICICI Prudential Energy Opportunities Fund - Growth
+Thematic Energy|Kotak Energy Opportunities Fund - Regular - Growth
+Thematic Energy|Nippon India Power & Infra Fund - Growth
+Thematic Energy|SBI Energy Opportunities Fund - Regular - Growth
+Thematic Energy|Tata Resources & Energy Fund - Regular - Growth
+
+# Thematic Commodities — all 2 taken verbatim from scheme_master in Azure
+# Blob (category = 'THEMATIC COMMODITIES'), not typed by hand.
+
+Thematic Commodities|ICICI Prudential Commodities Fund - Regular Plan - Growth
+Thematic Commodities|quant Commodities Fund - Regular Plan - Growth
+
+# Thematic Housing Opportunities — all 3 taken verbatim from scheme_master in
+# Azure Blob (category = 'THEMATIC HOUSING OPPORTUNITIES'), not typed by hand.
+# Without this block, "ICICI Pru Housing Opportunities Fund" fuzzy-matched
+# (score 85, just above FUZZY_FLOOR) to "ICICI Prudential Energy Opportunities
+# Fund" — a real fund misattribution, caught before merging by cross-checking
+# against a full scheme_master pull rather than trusting the fuzzy score.
+
+Thematic Housing Opportunities|HDFC Housing Opportunities Fund - Regular Plan - Growth
+Thematic Housing Opportunities|ICICI Prudential Housing Opportunities Fund - Regular Plan - Growth
+Thematic Housing Opportunities|Tata Housing Opportunities Fund - Regular Plan - Growth
+
+# Sectoral Manufacturing — all 12 taken verbatim from scheme_master in Azure
+# Blob (category = 'SECTORAL MANUFACTURING'), not typed by hand.
+
+Sectoral Manufacturing|ABSL Manufacturing Equity Fund - Regular - Growth
+Sectoral Manufacturing|Axis India Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|Baroda BNP Paribas Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|Canara Robeco Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|HDFC Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|ICICI Prudential Manufacturing Fund - Growth
+Sectoral Manufacturing|Invesco India Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|Kotak Manufacture in India Fund - Regular - Growth
+Sectoral Manufacturing|LIC MF Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|Mahindra Manulife Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|Motilal Oswal Manufacturing Fund - Regular - Growth
+Sectoral Manufacturing|quant Manufacturing Fund - Growth - Regular
+
+# Thematic MNC — all 7 taken verbatim from scheme_master in Azure Blob
+# (category = 'THEMATIC MNC'), not typed by hand. Without this block,
+# "Nippon India MNC Fund" fuzzy-matched (score 86) to "Nippon India Growth Mid
+# Cap Fund" — a real fund misattribution caught before merging.
+
+Thematic MNC|ABSL MNC Fund - Regular Plan - Growth
+Thematic MNC|HDFC MNC Fund - Regular Plan - Growth
+Thematic MNC|ICICI Prudential MNC Fund - Regular Plan - Growth
+Thematic MNC|Kotak MNC Fund - Regular Plan - Growth
+Thematic MNC|Nippon India MNC Fund - Regular Plan - Growth
+Thematic MNC|SBI MNC Fund - Regular Plan - Growth
+Thematic MNC|UTI - MNC Fund - Regular Plan - Growth
+
+# Sectoral PSU — all 5 taken verbatim from scheme_master in Azure Blob
+# (category = 'SECTORAL PSU'), not typed by hand.
+
+Sectoral PSU|ABSL PSU Equity Fund - Regular - Growth
+Sectoral PSU|ICICI Prudential PSU Equity Fund - Growth
+Sectoral PSU|Invesco India PSU Equity Fund - Regular - Growth
+Sectoral PSU|SBI PSU Fund - Regular - Growth
+Sectoral PSU|quant PSU Fund - Growth - Regular
+
+# Multi Asset Allocation — all 36 taken verbatim from scheme_master in Azure
+# Blob (category = 'MULTI ASSET ALLOCATION'), not typed by hand.
+
+Multi Asset Allocation|360 ONE Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|ABSL Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|AlphaGrep Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Axis Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|BOI Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Bajaj Finserv Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Bandhan Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Baroda BNP Paribas Multi Asset Fund - Regular - Growth
+Multi Asset Allocation|Canara Robeco Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Capitalmind Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|DSP Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Edelweiss Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Franklin India Multi Asset Allocation Fund - Growth
+Multi Asset Allocation|Groww Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|HDFC Multi-Asset Fund - Growth
+Multi Asset Allocation|HSBC Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|ICICI Prudential Multi-Asset Fund - Growth
+Multi Asset Allocation|Invesco India Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|JM Multi Asset Allocation Fund (Regular) - Growth
+Multi Asset Allocation|Kotak Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|LIC MF Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Mahindra Manulife Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Mirae Asset Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Nippon India Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|PGIM India Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Quantum Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|SBI Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Samco Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Shriram Multi Asset Allocation Fund - Regular Growth
+Multi Asset Allocation|Sundaram Multi Asset Allocation Fund - Regular Plan - Growth
+Multi Asset Allocation|Tata Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|The Wealth Company Multi Asset Allocation Fund - Regular Growth
+Multi Asset Allocation|UTI Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|Union Multi Asset Allocation Fund - Regular - Growth
+Multi Asset Allocation|WhiteOak Capital Multi Asset Allocation Fund Regular Plan Growth
+Multi Asset Allocation|quant Multi Asset Allocation Fund - Growth - Regular
+
+# Contra — all 5 taken verbatim from scheme_master in Azure Blob
+# (category = 'CONTRA'), not typed by hand.
+
+Contra|Bandhan Contra Fund - Regular Plan - Growth
+Contra|Invesco India Contra Fund - Regular - Growth
+Contra|Kotak Contra Fund - Regular - Growth
+Contra|Motilal Oswal Contra Fund - Regular - Growth
+Contra|SBI Contra Fund - Regular - Growth

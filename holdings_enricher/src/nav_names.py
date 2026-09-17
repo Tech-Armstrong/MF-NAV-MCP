@@ -62,6 +62,25 @@ AMC_ALIASES = {
     "trustmf": "trust mf",
 }
 
+# Product-name synonyms: some AMCs market a fund under one name while AMFI's
+# NAV data carries the SEBI-category name instead — same scheme_code, wholly
+# different words, so fuzzy matching alone won't clear FUZZY_FLOOR (e.g. Baroda
+# BNP Paribas 145387 / Sundaram 149715 are sold as "Dynamic Asset Allocation"
+# but the NAV parquet lists both as "Balanced Advantage"). Applied the same way
+# as AMC_ALIASES — longest phrase first, before noise removal.
+PRODUCT_ALIASES = {
+    "dynamic asset allocation": "balanced advantage",
+    # HDFC (103131) and ICICI Prudential (101144) brand their Multi Asset
+    # Allocation scheme without "Allocation" in the NAV data ("HDFC
+    # Multi-Asset Fund", "ICICI Prudential Multi-Asset Fund"), while every
+    # other AMC's NAV name keeps the word. Applied symmetrically by
+    # normalize(), so it collapses "allocation" away on both sides rather
+    # than risking a one-sided alias — without it, HDFC's holdings-source
+    # name fuzzy-matched HSBC's NAV name at 92.6 (blocked only by the
+    # same-AMC guard, not a safe outcome to rely on).
+    "multi asset allocation": "multi asset",
+}
+
 # Plan / option / structural words that carry no identity. Removed from both
 # sides before comparison.
 #
@@ -148,6 +167,11 @@ def normalize(name: str) -> str:
     for long_form in sorted(AMC_ALIASES, key=len, reverse=True):
         if long_form in s:
             s = s.replace(long_form, AMC_ALIASES[long_form])
+            break
+
+    for long_form in sorted(PRODUCT_ALIASES, key=len, reverse=True):
+        if long_form in s:
+            s = s.replace(long_form, PRODUCT_ALIASES[long_form])
             break
 
     for pat in _NOISE:
