@@ -78,6 +78,7 @@ import os
 import sys
 import re
 import time
+import math
 import threading
 import statistics
 import datetime as _dt
@@ -162,18 +163,33 @@ _INDEX_ALIASES = {
 # fund_risk_data when no explicit benchmark_ticker is passed. Keys are
 # UPPERCASE to match category values as stored (see list_categories()).
 #
-# Deliberately starts with just the three unambiguous cap-based categories —
-# each has one standard NIFTY-family benchmark that means the same thing
-# across every fund in it. Every other category (Large & Mid Cap, Multi Cap,
-# Flexi Cap, hybrids, debt, sectoral/thematic, FOF, ...) is left out on
-# purpose: guessing a benchmark for a category without one obvious answer is
-# worse than surfacing "no default benchmark for this category" and requiring
-# an explicit benchmark_ticker. Extend this map as more categories get a
-# confirmed standard benchmark.
+# Started with just the three unambiguous cap-based categories — each has one
+# standard NIFTY-family benchmark that means the same thing across every fund
+# in it. Extended (2026-09-22, per desk instruction) to a second group of
+# categories that do NOT have one obvious canonical benchmark the way
+# Large/Mid/Small Cap do (they are stock-picking mandates spanning the market
+# rather than a cap tier) — NIFTY_500 is a broad-market proxy default for
+# these, a deliberate approximation rather than a confirmed factsheet
+# benchmark, so treat their beta/capture ratios as less authoritative than
+# the cap-tier three.
+#
+# Every OTHER category (hybrids, debt, sectoral/thematic besides the two
+# named below, FOF, ...) is still left out on purpose: guessing a benchmark
+# for a category with no obvious answer is worse than surfacing "no default
+# benchmark for this category" and requiring an explicit benchmark_ticker.
+# Extend this map as more categories get a confirmed standard benchmark.
 _CATEGORY_BENCHMARKS = {
     "LARGE CAP": "NIFTY_100",
     "MID CAP": "NIFTY_MIDCAP_150",
     "SMALL CAP": "NIFTY_SMALLCAP_250",
+    "LARGE & MID CAP": "NIFTY_LARGEMIDCAP_250",
+    "FLEXI CAP": "NIFTY_500",
+    "MULTI CAP": "NIFTY500_MULTICAP_50_25_25",
+    "CONTRA": "NIFTY_500",
+    "VALUE": "NIFTY_500",
+    "FOCUSED": "NIFTY_500",
+    "THEMATIC BUSINESS CYCLE": "NIFTY_500",
+    "THEMATIC INNOVATION": "NIFTY_500",
 }
 
 _VALID_PERIODS = {
@@ -1170,6 +1186,167 @@ def get_category_returns(
     }
 
 
+# ── Quartile Ranking ────────────────────────────────────────────────────────
+# Ported from mf-research-qr-main/engine/calculation_engine.py (section E9),
+# which is the LOCKED source of truth for this logic on that project — do not
+# re-derive or "improve" the bracket-sizing rule here; if the rule itself
+# needs to change, that happens in calculation_engine.py first and this port
+# is updated to match, not the other way round. Logic and doc comments below
+# are carried over near-verbatim from there; only the surrounding wiring
+# (get_quartile_ranking, which pulls returns via get_category_returns instead
+# of a SQLite-backed pipeline) is new to this server.
+
+# Pools smaller than this keep the old ROUNDUP behaviour — see _quartile().
+_QUARTILE_SMALL_POOL = 3
+
+
+def _quartile(rank: int, n: int) -> Optional[int]:
+    """
+    Equal brackets of n//4, with any remainder given to the BOTTOM quartiles —
+    Q4 first, then Q3, then Q2. Q1 never takes a leftover.
+
+        n = 40  ->  Q1 10  Q2 10  Q3 10  Q4 10     (divides evenly)
+        n = 17  ->  Q1  4  Q2  4  Q3  4  Q4  5     (1 spare -> Q4)
+        n = 18  ->  Q1  4  Q2  4  Q3  5  Q4  5     (2 spare -> Q4, Q3)
+        n = 31  ->  Q1  7  Q2  8  Q3  8  Q4  8     (3 spare -> Q4, Q3, Q2)
+
+    This replaces the naive ROUNDUP transcription
+        IF(rank <= ROUNDUP(N*0.25,0), 1, IF(rank <= ROUNDUP(N*0.50,0), 2, ...))
+    which hands spare funds to Q1 instead, reading Q1 5 / Q2 4 / Q3 4 / Q4 4 at
+    n = 17. The two agree only when n is a multiple of 4. A spare fund should
+    not be promoted into the top bracket.
+
+    FEWER THAN 3 FUNDS keeps the old ROUNDUP behaviour. Bottom-loading a pool
+    that small reads badly: the sole fund in a category would be Q4, and with
+    two funds neither could be Q1. The old formula puts them at the top
+    instead (n = 1 -> Q1; n = 2 -> Q1 and Q3). Note n = 3 uses the NEW rule,
+    so its best fund lands in Q2, not Q1 — "fewer than 3" as specified.
+
+    Returns 1-4, or None when rank is None or n == 0 (displays '-').
+    """
+    if rank is None or n == 0:
+        return None
+
+    if n < _QUARTILE_SMALL_POOL:
+        if rank <= math.ceil(n * 0.25):
+            return 1
+        if rank <= math.ceil(n * 0.50):
+            return 2
+        if rank <= math.ceil(n * 0.75):
+            return 3
+        return 4
+
+    base, remainder = divmod(n, 4)
+    # Index 0 is Q1. A remainder of r fills the last r brackets, bottom-up.
+    sizes = [
+        base,
+        base + (1 if remainder >= 3 else 0),
+        base + (1 if remainder >= 2 else 0),
+        base + (1 if remainder >= 1 else 0),
+    ]
+
+    upper = 0
+    for q, size in enumerate(sizes, start=1):
+        upper += size
+        if rank <= upper:
+            return q
+    # rank > n: out of range for this pool. Treated as the bottom bracket
+    # rather than raising, matching the old formula's fall-through.
+    return 4
+
+
+def _rank_and_quartile(
+    returns: dict[str, Optional[float]]
+) -> dict[str, tuple[Optional[int], Optional[int]]]:
+    """
+    Given {scheme_code: return_pct|None}, return
+    {scheme_code: (rank, quartile)} where ineligible = (None, None).
+    Ranks descending (rank 1 = best).
+    """
+    eligible = {k: v for k, v in returns.items() if v is not None}
+    n = len(eligible)
+    ranked = sorted(eligible.items(), key=lambda x: x[1], reverse=True)
+
+    result = {}
+    for rank_1idx, (code, _) in enumerate(ranked, start=1):
+        q = _quartile(rank_1idx, n)
+        result[code] = (rank_1idx, q)
+
+    for code in returns:
+        if code not in result:
+            result[code] = (None, None)
+
+    return result
+
+
+@mcp.tool()
+def get_quartile_ranking(
+    category: str,
+    period: str,
+    staleness_days: int = 7,
+) -> dict:
+    """Quartile ranking of every fund in a category for one period.
+
+    Ranks funds by return_pct (best = rank 1) and buckets them into quartiles
+    (1 = best) using the SAME bracket-sizing rule as the mf-research-qr
+    dashboard's Quartile Ranking tab: equal brackets of n//4, with any
+    remainder handed to the BOTTOM quartiles (Q4 first, then Q3, then Q2) —
+    NOT the naive ROUNDUP formula, which promotes spare funds into Q1 instead.
+    Categories with fewer than 3 eligible funds fall back to the ROUNDUP rule,
+    since bottom-loading a pool that small reads badly (see _quartile()).
+
+    Built on top of get_category_returns — same staleness handling, same
+    period conventions, same eligibility rules. A fund that is stale or has
+    no return_pct for the period is EXCLUDED from ranking/quartile (both come
+    back None) but still listed in `results`, same as get_category_returns
+    marks it. This mirrors calculation_engine.py's rank_and_quartile(), which
+    only ranks eligible (non-None) returns and leaves everyone else at
+    (None, None).
+
+    Args:
+        category: Category name (case-insensitive).
+        period: One of 1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y,YTD,MTD,SI.
+        staleness_days: Max allowed lag from the category as-of date before a
+            fund's return is treated as ineligible for ranking (default 7),
+            same semantics as get_category_returns.
+    """
+    base = get_category_returns(category, period, staleness_days=staleness_days)
+    if base.get("error"):
+        return base
+
+    # Eligible = has a return AND is not stale, matching get_category_returns'
+    # own definition of what feeds avg_return_pct/avg_cagr_pct — quartiles
+    # should be computed over the same eligible set, not a different one.
+    eligible_returns = {
+        r["scheme_code"]: r["return_pct"]
+        for r in base["results"]
+        if r["return_pct"] is not None and not r["stale"]
+    }
+    ranks = _rank_and_quartile(eligible_returns)
+
+    results = []
+    for r in base["results"]:
+        rank, q = ranks.get(r["scheme_code"], (None, None))
+        results.append({**r, "rank": rank, "quartile": q})
+
+    # Best-first within each quartile, unranked funds (stale/errored/no data)
+    # pushed to the end — a more useful default reading order for a quartile
+    # table than get_category_returns' own sort_by, which this tool does not
+    # expose (rank IS the sort here).
+    results.sort(key=lambda r: (r["rank"] is None, r["rank"] if r["rank"] is not None else 0))
+
+    return {
+        "category": base["category"],
+        "period": base["period"],
+        "as_of": base["as_of"],
+        "staleness_days": staleness_days,
+        "total_funds": base["total_funds"],
+        "eligible_for_ranking": len(eligible_returns),
+        "excluded_stale": base["excluded_stale"],
+        "results": results,
+    }
+
+
 @mcp.tool()
 def list_indices() -> dict:
     """List the benchmark indices available, with their tickers and history span.
@@ -1727,6 +1904,41 @@ def _annualized_std_dev_pct(monthly_returns_pct: list[float]) -> float:
     return statistics.stdev(monthly_returns_pct) * (12 ** 0.5)
 
 
+def _annualized_downside_deviation_pct(monthly_returns_pct: list[float], mar_pct: float = 0.0) -> float:
+    """
+    Downside Deviation = sqrt(mean(min(R - MAR, 0)^2)) * sqrt(12), annualized
+    from monthly returns. MAR (minimum acceptable return) defaults to 0%, the
+    standard convention (Armstrong Capital's Fund Analysis Parameter
+    Reference also allows MAR = risk-free rate, not offered here yet since no
+    caller has asked for it).
+
+    Unlike _annualized_std_dev_pct this is a population mean over ALL n
+    points (per the standard formula, 1/n not 1/(n-1)) — every month
+    including the non-negative ones counts as a 0 in the sum, it is not an
+    average taken only over the down-months.
+    """
+    if len(monthly_returns_pct) < 2:
+        raise ValueError("Need at least 2 monthly returns to compute downside deviation.")
+    downside_sq = [min(r - mar_pct, 0.0) ** 2 for r in monthly_returns_pct]
+    mean_sq = sum(downside_sq) / len(downside_sq)
+    return (mean_sq ** 0.5) * (12 ** 0.5)
+
+
+def _sortino_ratio(cagr_pct: float, risk_free_rate_pct: float, downside_deviation_pct: float) -> float:
+    """Sortino = (Fund Return - Risk-Free Rate) / Downside Deviation.
+
+    Same numerator as Sharpe (reuses the CAGR already computed for it — one
+    source of truth per window), denominator swapped for Downside Deviation
+    so upside volatility no longer penalizes the fund. Undefined at zero
+    downside deviation (a fund with no down-months over the window, e.g.
+    some very short or very defensive debt-fund windows), same as Sharpe is
+    undefined at zero total volatility.
+    """
+    if downside_deviation_pct <= 0:
+        raise ValueError("Zero downside deviation over the window; Sortino Ratio undefined.")
+    return (cagr_pct - risk_free_rate_pct) / downside_deviation_pct
+
+
 def _cagr_from_monthly_returns(monthly_returns_pct: list[float]) -> float:
     """Compound monthly returns, then annualize over the series length."""
     growth = 1.0
@@ -1756,6 +1968,85 @@ def _beta(fund_returns_pct: list[float], benchmark_returns_pct: list[float]) -> 
         raise ValueError("Benchmark has zero variance over the window; Beta undefined.")
     cov = statistics.covariance(fund_returns_pct, benchmark_returns_pct)
     return cov / var_b
+
+
+def _capture_ratios(fund_returns_pct: list[float], benchmark_returns_pct: list[float]) -> dict:
+    """
+    Upside/Downside Capture and Capture Asymmetry, on the SAME month-for-month
+    aligned monthly returns Beta already uses — one window, one source of
+    truth, same as std_dev/Sharpe/beta/drawdown in this row.
+
+    Up-months are those where the BENCHMARK return is > 0%, down-months where
+    it is < 0% (zero-return benchmark months fall in neither bucket, standard
+    convention). Each side's return is the COMPOUNDED (geometric) return over
+    just those isolated months, not an arithmetic mean of monthly returns —
+    compounding is what "how would this fund's cumulative return have
+    compared over all the benchmark's up-months" actually asks.
+
+    Upside Capture = fund's compounded return over up-months / benchmark's
+    compounded return over up-months, * 100. >100% means the fund rose more
+    than the benchmark during rallies.
+
+    Downside Capture = fund's compounded return over down-months /
+    benchmark's compounded return over down-months, * 100. <100% means the
+    fund fell less than the benchmark during selloffs (the traditionally
+    "good" direction); a defensive fund keeps this below ~85%.
+
+    Capture Asymmetry = Upside Capture / Downside Capture. >1.0 means the
+    fund captures proportionally more upside than downside — the single
+    risk-adjusted efficiency number the other two collapse into.
+
+    Percentage points in, not decimals (rets are already *100, matching every
+    other series in this file), so the ratios come out already scaled to
+    "100 = matches the benchmark exactly" without a further /100 anywhere.
+
+    Raises ValueError (soft-failed by the caller, like Beta) when there are
+    no up-months or no down-months in the window — capture is undefined
+    without both a benchmark rally and a benchmark selloff to measure against.
+    """
+    if len(fund_returns_pct) != len(benchmark_returns_pct):
+        raise ValueError(
+            f"fund and benchmark return series must be the same length, got "
+            f"{len(fund_returns_pct)} vs {len(benchmark_returns_pct)}.")
+    if not fund_returns_pct:
+        raise ValueError("Need at least 1 monthly return to compute capture ratios.")
+
+    def _compounded_return_pct(rets_pct: list[float]) -> float:
+        growth = 1.0
+        for r in rets_pct:
+            growth *= (1 + r / 100.0)
+        return (growth - 1) * 100.0
+
+    up_idx = [i for i, b in enumerate(benchmark_returns_pct) if b > 0]
+    down_idx = [i for i, b in enumerate(benchmark_returns_pct) if b < 0]
+
+    if not up_idx:
+        raise ValueError("No up-months (benchmark return > 0%) over the window; Upside Capture undefined.")
+    if not down_idx:
+        raise ValueError("No down-months (benchmark return < 0%) over the window; Downside Capture undefined.")
+
+    fund_up = _compounded_return_pct([fund_returns_pct[i] for i in up_idx])
+    bench_up = _compounded_return_pct([benchmark_returns_pct[i] for i in up_idx])
+    fund_down = _compounded_return_pct([fund_returns_pct[i] for i in down_idx])
+    bench_down = _compounded_return_pct([benchmark_returns_pct[i] for i in down_idx])
+
+    if bench_up <= 0:
+        raise ValueError("Benchmark's compounded up-month return is not positive; Upside Capture undefined.")
+    if bench_down >= 0:
+        raise ValueError("Benchmark's compounded down-month return is not negative; Downside Capture undefined.")
+
+    upside = (fund_up / bench_up) * 100.0
+    downside = (fund_down / bench_down) * 100.0
+
+    result = {
+        "upside_capture_pct": upside,
+        "downside_capture_pct": downside,
+        "up_months": len(up_idx),
+        "down_months": len(down_idx),
+    }
+    if downside != 0:
+        result["capture_asymmetry"] = upside / downside
+    return result
 
 
 def _max_drawdown_pct(navs: list[float]) -> float:
@@ -1803,8 +2094,21 @@ def fund_risk_data(
     """Risk metrics for one or many funds, as published on factsheets.
 
     Returns, per fund (per window — see `window` below):
-      - std_dev_pct      annualized standard deviation (volatility)
-      - sharpe_ratio     (CAGR - risk-free rate) / std_dev
+      - std_dev_pct           annualized standard deviation (volatility)
+      - sharpe_ratio          (CAGR - risk-free rate) / std_dev
+      - downside_deviation_pct annualized std dev of only the below-0%
+                         monthly returns (MAR = 0%) — the Sortino denominator.
+                         Unlike std_dev_pct this never penalizes upside
+                         months, so a fund with strong-but-uneven positive
+                         returns can show a much lower downside_deviation_pct
+                         than std_dev_pct; the gap between the two is itself
+                         informative (a large gap means the fund's volatility
+                         is mostly upside).
+      - sortino_ratio    (CAGR - risk-free rate) / downside_deviation_pct —
+                         Sharpe's downside-only counterpart. Omitted (with
+                         sortino_error) at zero downside deviation (no
+                         down-months over the window), same as Sharpe is
+                         omitted at zero total volatility.
       - beta             Cov(fund, benchmark) / Var(benchmark) — only when
                          benchmark_ticker (or a category default) applies
       - max_drawdown_pct largest peak-to-trough decline over the window's
@@ -1813,6 +2117,28 @@ def fund_risk_data(
                          worst-case decline, using the same CAGR as Sharpe.
                          Omitted (with calmar_error) at zero drawdown, same
                          as Sharpe is omitted at zero volatility.
+      - upside_capture_pct / downside_capture_pct — only when benchmark_ticker
+                         (or a category default) applies, on the SAME aligned
+                         monthly returns as beta. Upside/Downside Capture:
+                         the fund's compounded return over the benchmark's
+                         up-months (resp. down-months), divided by the
+                         benchmark's own compounded return over the same
+                         months, *100. >100% upside means the fund out-ran
+                         the benchmark in rallies; <100% downside means it
+                         fell less than the benchmark in selloffs (the
+                         "good" direction). Aggressive funds tend to run
+                         upside_capture_pct > 110% alongside
+                         downside_capture_pct > 100%; defensive funds keep
+                         downside_capture_pct < 85%, usually at some cost to
+                         upside_capture_pct.
+      - capture_asymmetry upside_capture_pct / downside_capture_pct — a
+                         single risk-adjusted efficiency score. >1.0 means
+                         the fund captures proportionally more upside than
+                         downside. Omitted when downside_capture_pct is 0.
+                         Omitted (with capture_error) alongside beta_error
+                         when there is no benchmark, and separately (also
+                         capture_error) if the window has no up-months or no
+                         down-months to measure against.
 
     WINDOW: pass window="3Y" (36 months, the default), "5Y" (60 months), or
     "both" to get one result per fund at EACH window in a single call —
@@ -1845,14 +2171,21 @@ def fund_risk_data(
     BETA'S BENCHMARK IS PER-FUND, NOT PER-CALL. Passing benchmark_ticker pins
     every fund in the call to that one index — use this for an explicit
     comparison. Leave it unset and each fund gets its OWN benchmark from its
-    scheme_master category (Large Cap -> NIFTY_100, Mid Cap -> NIFTY_MIDCAP_150,
-    Small Cap -> NIFTY_SMALLCAP_250), so mixing a large-cap and a mid-cap fund
-    in one call does not silently benchmark both against the same index. Only
-    those three categories have a default; anything else (Large & Mid Cap,
-    Multi Cap, Flexi Cap, hybrids, sectoral, ...) gets no beta unless you pass
-    benchmark_ticker explicitly. `category` and, when beta is present,
-    `benchmark_source` ("category_default" or "explicit") are in each result
-    so you can see what was actually used.
+    scheme_master category, so mixing funds from different categories in one
+    call does not silently benchmark them all against the same index:
+      - Large Cap -> NIFTY_100, Mid Cap -> NIFTY_MIDCAP_150,
+        Small Cap -> NIFTY_SMALLCAP_250 (one canonical benchmark per tier)
+      - Large & Mid Cap -> NIFTY_LARGEMIDCAP_250,
+        Multi Cap -> NIFTY500_MULTICAP_50_25_25
+      - Flexi Cap, Contra, Value, Focused, Thematic Business Cycle,
+        Thematic Innovation -> NIFTY_500 (a broad-market PROXY default for
+        these stock-picking mandates, not a confirmed factsheet benchmark
+        the way the cap-tier entries above are — treat beta/capture ratios
+        for these categories as less authoritative)
+    Anything else (hybrids, debt, other sectoral/thematic, FOF, ...) still
+    gets no beta unless you pass benchmark_ticker explicitly. `category` and,
+    when beta is present, `benchmark_source` ("category_default" or
+    "explicit") are in each result so you can see what was actually used.
 
     Only NIFTY-family tickers exist in this server's index data — there is no
     BSE series, so a fund whose factsheet benchmarks against a BSE index (e.g.
@@ -2035,6 +2368,20 @@ def fund_risk_data(
                 "months_used": len(rets),
             }
 
+            # Downside Deviation / Sortino: same monthly rets as std_dev/Sharpe
+            # above, MAR = 0%. Soft-fail (sortino_error) rather than dropping
+            # the row — downside_deviation_pct can be a valid 0 for a fund
+            # with no down-months over the window (Sortino is then undefined,
+            # not the deviation itself), so this mirrors the calmar_error
+            # pattern below rather than the harder std_dev/Sharpe failure
+            # above.
+            dd = _annualized_downside_deviation_pct(rets)
+            row["downside_deviation_pct"] = round(dd, 3)
+            try:
+                row["sortino_ratio"] = round(_sortino_ratio(cagr, rf, dd), 3)
+            except ValueError as exc:
+                row["sortino_error"] = str(exc)
+
             # Max Drawdown / Calmar: same monthly navs as everything else in
             # this row, so it describes the same window. Soft-fail like beta
             # (mdd_error) rather than dropping the fund entirely — std_dev and
@@ -2086,6 +2433,20 @@ def fund_risk_data(
                             row["benchmark_source"] = "category_default" if auto_selected else "explicit"
                         except ValueError as exc:
                             row["beta_error"] = str(exc)
+
+                        # Capture ratios: same aligned fund/benchmark monthly
+                        # returns as Beta above, so soft-fail the same way
+                        # (capture_error) rather than dropping the row.
+                        try:
+                            capture = _capture_ratios(fund_rets, bench_rets)
+                            row["upside_capture_pct"] = round(capture["upside_capture_pct"], 3)
+                            row["downside_capture_pct"] = round(capture["downside_capture_pct"], 3)
+                            row["up_months"] = capture["up_months"]
+                            row["down_months"] = capture["down_months"]
+                            if "capture_asymmetry" in capture:
+                                row["capture_asymmetry"] = round(capture["capture_asymmetry"], 3)
+                        except ValueError as exc:
+                            row["capture_error"] = str(exc)
 
             results.append(row)
 
