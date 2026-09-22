@@ -1347,6 +1347,354 @@ def get_quartile_ranking(
     }
 
 
+# ── Rolling windows / quartile journey ───────────────────────────────────────
+# get_fund_returns and get_category_returns/get_quartile_ranking all answer
+# "what is true RIGHT NOW" — one window ending at the fund's latest NAV. These
+# answer "how has that same figure trended" by recomputing the SAME window
+# repeatedly, stepped back in time, reusing _compute_returns' existing CUSTOM
+# window path (window=(start, end)) rather than new NAV-snapping SQL.
+
+_PERIOD_LENGTH_RE = re.compile(r"^(\d+)([WMY])$")
+
+
+def _period_length_days_hint(period: str) -> None:
+    """Rejects period strings with no fixed length to slide a window by —
+    YTD/MTD/SI are calendar- or inception-anchored, not a fixed span, so
+    "roll this back N steps" is not a coherent request for them. Raises
+    ValueError; callers use this purely for its side effect (validation)."""
+    p = period.upper().strip()
+    if p in {"YTD", "MTD", "SI"}:
+        raise ValueError(
+            f"'{p}' has no fixed length to roll — use a fixed-length period "
+            f"(1W, 2W, 1M, 3M, 6M, 9M, 1Y, 2Y, 3Y, 5Y) for window and step.")
+    if not _PERIOD_LENGTH_RE.match(p):
+        raise ValueError(
+            f"Unrecognised period '{period}'. Valid fixed-length periods: "
+            f"1W, 2W, 1M, 3M, 6M, 9M, 1Y, 2Y, 3Y, 5Y.")
+
+
+def _step_back(anchor: date, step: str) -> date:
+    """anchor moved earlier by one `step` (same W/M/Y vocabulary as periods,
+    reusing _resolve_window's own suffix parsing so window and step can never
+    disagree about what '3M' means)."""
+    m = _PERIOD_LENGTH_RE.match(step.upper().strip())
+    n, unit = int(m.group(1)), m.group(2)
+    if unit == "W":
+        return anchor - timedelta(weeks=n)
+    if unit == "M":
+        return anchor - relativedelta(months=n)
+    return anchor - relativedelta(years=n)  # "Y"
+
+
+def _rolling_observation_dates(
+    latest_anchor: date, earliest_anchor: date, step: str,
+) -> list[date]:
+    """Walk backward from latest_anchor to earliest_anchor in `step`
+    increments, inclusive of both ends. Guards a zero/malformed step (which
+    would otherwise loop forever) — _period_length_days_hint / the regex
+    match in _step_back already reject a step of "0W" etc. at the digit
+    level, but this is the actual forward-progress check."""
+    dates = []
+    cur = latest_anchor
+    seen = set()
+    while cur >= earliest_anchor:
+        if cur in seen:
+            break  # no forward progress — malformed step, stop rather than hang
+        seen.add(cur)
+        dates.append(cur)
+        nxt = _step_back(cur, step)
+        if nxt >= cur:
+            raise ValueError(f"step '{step}' does not move the anchor backward.")
+        cur = nxt
+    return dates
+
+
+def _rolling_returns(
+    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1W",
+) -> dict:
+    """
+    How a fund's trailing `window` return (e.g. "3M") has trended over the
+    last `lookback`, sampled every `step`.
+
+    get_fund_returns always anchors to the fund's LATEST NAV — it can only
+    ever answer "what is the 3M return right now." This instead recomputes
+    that same trailing 3M return as of each of several past observation
+    dates, so the sequence shows whether the fund's momentum has been rising,
+    falling, or choppy — not just its current snapshot.
+
+    Each observation date's return is computed exactly like get_fund_returns
+    would if that date were "today": _resolve_window's "before" snap gives
+    the window's start_target from `window` (e.g. 3 months back from that
+    obs_date), which _compute_returns then snaps to the latest NAV on/before
+    it, and obs_date itself snaps to the latest NAV on/before it for the end.
+    A fund with no NAV yet that far back (window predates inception) is
+    skipped silently for that point rather than erroring the whole call.
+
+    step controls spacing between observation points, independent of window
+    length:
+      - step < window (e.g. window="3M", step="1M") gives OVERLAPPING rolling
+        windows — a smoother trend line, since adjacent points share most of
+        their underlying NAV data.
+      - step == window (e.g. window="3M", step="3M") gives independent,
+        non-overlapping back-to-back blocks — coarser, but each point is a
+        genuinely separate period.
+      - step > window is legal but leaves gaps between windows.
+
+    Returns points OLDEST-FIRST (left-to-right plotting order), each with
+    obs_date, start_nav_date, start_nav, end_nav_date, end_nav, return_pct.
+    """
+    _period_length_days_hint(window)
+    _period_length_days_hint(step)
+
+    con = _db()
+    meta = con.execute(
+        "SELECT scheme_name, fund_house, category FROM scheme_master WHERE scheme_code = ?",
+        [scheme_code]).fetchone()
+    if not meta:
+        return {"scheme_code": scheme_code,
+                "error": f"Unknown scheme_code '{scheme_code}'. Use search_funds to resolve a fund name."}
+    scheme_name, fund_house, category = meta
+
+    anchor_row = con.execute(
+        "SELECT MAX(nav_date) FROM nav_history WHERE scheme_code = ?", [scheme_code]).fetchone()
+    latest_anchor = anchor_row[0] if anchor_row else None
+    if latest_anchor is None:
+        return {"scheme_code": scheme_code, "scheme_name": scheme_name,
+                "error": "no NAV data for this scheme"}
+
+    lb = lookback.upper().strip()
+    if not _PERIOD_LENGTH_RE.match(lb):
+        raise ValueError(f"lookback must be a fixed-length period like '1Y', got {lookback!r}.")
+    earliest_anchor = _step_back(latest_anchor, lb)
+
+    obs_dates = _rolling_observation_dates(latest_anchor, earliest_anchor, step)
+
+    points = []
+    for obs_date in reversed(obs_dates):  # oldest first for the output
+        start_target, _end_target, _snap = _resolve_window(
+            window.upper().strip(), obs_date, date.min)
+        row = _compute_returns([scheme_code], "CUSTOM", window=(start_target, obs_date))[0]
+        if row.get("error"):
+            continue  # window predates inception (or similar) — skip silently
+        points.append({
+            "obs_date": str(obs_date),
+            "start_nav_date": str(row["start_nav_date"]),
+            "start_nav": row["start_nav"],
+            "end_nav_date": str(row["end_nav_date"]),
+            "end_nav": row["end_nav"],
+            "return_pct": row["return_pct"],
+        })
+
+    return {
+        "scheme_code": scheme_code, "scheme_name": scheme_name,
+        "fund_house": fund_house, "category": category,
+        "window": window.upper().strip(), "lookback": lookback.upper().strip(),
+        "step": step.upper().strip(),
+        "count": len(points), "points": points,
+    }
+
+
+@mcp.tool()
+def get_fund_rolling_returns(
+    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1W",
+) -> dict:
+    """How a fund's trailing return has trended, not just its value today.
+
+    get_fund_returns always answers "what's the {period} return as of the
+    fund's latest NAV" — one number. This instead recomputes that SAME
+    trailing return repeatedly at several points over the past `lookback`,
+    stepping back by `step` each time, so you can see whether momentum has
+    been rising, falling, or choppy.
+
+    Example: window="3M", lookback="1Y", step="1M" gives ~12 overlapping
+    trailing-3-month returns, one per month over the last year — "has this
+    fund's 3-month momentum been improving or fading?" Use step==window
+    (e.g. step="3M") instead for independent, non-overlapping quarters if
+    you want each point to describe a genuinely separate period rather than
+    a smoothed rolling trend.
+
+    Args:
+        scheme_code: Fund scheme code (from search_funds).
+        window: Fixed-length trailing period to compute at each point — one
+            of 1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y. NOT YTD/MTD/SI (no fixed
+            length to roll).
+        lookback: How far back to sample, same vocabulary as window
+            (default "1Y").
+        step: Spacing between observation points, same vocabulary as window
+            (default "1W"). step < window overlaps consecutive windows;
+            step == window gives independent back-to-back blocks.
+    """
+    try:
+        return _rolling_returns(scheme_code, window, lookback, step)
+    except ValueError as exc:
+        return {"scheme_code": scheme_code, "error": str(exc)}
+
+
+def _quartile_journey(
+    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1M",
+) -> dict:
+    """
+    How a fund's quartile WITHIN ITS CATEGORY has trended: at each of several
+    past observation dates, compute the fund's trailing `window` return and
+    every category peer's, then rank/quartile the fund among its peers as of
+    that date — same _quartile() bracket rule as get_quartile_ranking.
+
+    Unlike get_quartile_ranking (one category, one period, every fund), this
+    is one fund, one category, MANY periods — the category-relative
+    counterpart of _rolling_returns' fund-only trend.
+
+    All of a category's NAV history over the full span needed is fetched in
+    ONE query up front (not once per fund per observation point), then every
+    observation date's rank is computed against that same in-memory table —
+    avoiding O(funds x points) round trips for what would otherwise be a
+    slow call on a large category.
+
+    Returns points OLDEST-FIRST, each with obs_date, return_pct, quartile,
+    peer_count, category_min, category_max, category_median. A point is
+    omitted (not zero-filled) when the fund itself has no return that far
+    back (predates inception), same as _rolling_returns.
+    """
+    _period_length_days_hint(window)
+    _period_length_days_hint(step)
+    if not _PERIOD_LENGTH_RE.match(lookback.upper().strip()):
+        raise ValueError(f"lookback must be a fixed-length period like '1Y', got {lookback!r}.")
+
+    con = _db()
+    meta = con.execute(
+        "SELECT scheme_name, category FROM scheme_master WHERE scheme_code = ?",
+        [scheme_code]).fetchone()
+    if not meta:
+        return {"scheme_code": scheme_code,
+                "error": f"Unknown scheme_code '{scheme_code}'. Use search_funds to resolve a fund name."}
+    scheme_name, category = meta
+    if not category:
+        return {"scheme_code": scheme_code, "scheme_name": scheme_name,
+                "error": "This fund has no category on file; cannot rank it against peers."}
+
+    anchor_row = con.execute(
+        "SELECT MAX(nav_date) FROM nav_history WHERE scheme_code = ?", [scheme_code]).fetchone()
+    latest_anchor = anchor_row[0] if anchor_row else None
+    if latest_anchor is None:
+        return {"scheme_code": scheme_code, "scheme_name": scheme_name,
+                "error": "no NAV data for this scheme"}
+
+    earliest_anchor = _step_back(latest_anchor, lookback.upper().strip())
+    # Pad one more window's length further back so even the EARLIEST
+    # observation point has enough prior NAV history to compute its own
+    # trailing return (that return's start_target reaches before
+    # earliest_anchor by up to one window).
+    window_pad = _step_back(earliest_anchor, window.upper().strip())
+
+    obs_dates = _rolling_observation_dates(latest_anchor, earliest_anchor, step)
+
+    # One bulk fetch of the whole category's NAV history over the padded
+    # span, joined to scheme_master for the category filter — every
+    # observation date's ranking is computed against this same fetch rather
+    # than re-querying per point.
+    cat_rows = con.execute(
+        """SELECT n.scheme_code, n.nav_date, n.nav
+           FROM nav_history n
+           JOIN scheme_master m ON m.scheme_code = n.scheme_code
+           WHERE UPPER(m.category) = UPPER(?) AND n.nav_date BETWEEN ? AND ?
+           ORDER BY n.scheme_code, n.nav_date""",
+        [category, window_pad, latest_anchor],
+    ).fetchall()
+
+    # code -> sorted [(nav_date, nav), ...], for fast on/before and on/after
+    # lookups per observation point without re-querying DuckDB each time.
+    by_code: dict[str, list[tuple[date, float]]] = {}
+    for code, d, v in cat_rows:
+        by_code.setdefault(code, []).append((d, v))
+
+    def _nav_on_or_before(series: list[tuple[date, float]], target: date) -> Optional[float]:
+        best = None
+        for d, v in series:  # series is nav_date-ascending
+            if d > target:
+                break
+            best = v
+        return best
+
+    def _nav_on_or_after(series: list[tuple[date, float]], target: date) -> Optional[float]:
+        for d, v in series:
+            if d >= target:
+                return v
+        return None
+
+    points = []
+    for obs_date in reversed(obs_dates):  # oldest first
+        start_target, _end_target, _snap = _resolve_window(
+            window.upper().strip(), obs_date, date.min)
+
+        peer_returns: dict[str, float] = {}
+        for code, series in by_code.items():
+            end_nav = _nav_on_or_before(series, obs_date)
+            start_nav = _nav_on_or_after(series, start_target)
+            if end_nav is None or start_nav is None or start_nav == 0:
+                continue
+            peer_returns[code] = (end_nav / start_nav - 1) * 100.0
+
+        target_return = peer_returns.get(scheme_code)
+        if target_return is None:
+            continue  # fund not yet inception / no data at this point — skip
+
+        ranks = _rank_and_quartile(peer_returns)
+        rank, quartile = ranks[scheme_code]
+        values = sorted(peer_returns.values())
+        points.append({
+            "obs_date": str(obs_date),
+            "return_pct": round(target_return, 4),
+            "rank": rank,
+            "quartile": quartile,
+            "peer_count": len(peer_returns),
+            "category_min": round(values[0], 4),
+            "category_max": round(values[-1], 4),
+            "category_median": round(statistics.median(values), 4),
+        })
+
+    return {
+        "scheme_code": scheme_code, "scheme_name": scheme_name, "category": category,
+        "window": window.upper().strip(), "lookback": lookback.upper().strip(),
+        "step": step.upper().strip(),
+        "count": len(points), "points": points,
+    }
+
+
+@mcp.tool()
+def get_fund_quartile_journey(
+    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1M",
+) -> dict:
+    """How a fund's QUARTILE within its category has trended over time.
+
+    get_quartile_ranking answers "where does every fund in a category rank
+    RIGHT NOW, for one period." This instead tracks ONE fund's quartile
+    across many past observation points, using the same trailing-`window`
+    return and the same _quartile() bracket rule at each point — so you can
+    see whether a fund has been a steady Q1, sliding from Q1 to Q4, or
+    bouncing around, rather than just its current snapshot.
+
+    Example: window="3M", lookback="1Y", step="1M" gives ~12 points, one per
+    month, each showing where the fund's trailing-3-month return ranked
+    among its category peers as of that month.
+
+    Args:
+        scheme_code: Fund scheme code (from search_funds).
+        window: Fixed-length trailing period to rank at each point — one of
+            1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y. NOT YTD/MTD/SI.
+        lookback: How far back to sample, same vocabulary as window
+            (default "1Y").
+        step: Spacing between observation points, same vocabulary as window
+            (default "1M"). step < window overlaps consecutive windows;
+            step == window gives independent back-to-back blocks — this is
+            the more natural default here since a "quartile journey" usually
+            means distinct periods (like the source dashboard's monthly/
+            quarterly modes), not a smoothed rolling trend.
+    """
+    try:
+        return _quartile_journey(scheme_code, window, lookback, step)
+    except ValueError as exc:
+        return {"scheme_code": scheme_code, "error": str(exc)}
+
+
 @mcp.tool()
 def list_indices() -> dict:
     """List the benchmark indices available, with their tickers and history span.
