@@ -1187,14 +1187,146 @@ def get_category_returns(
 
 
 # ── Quartile Ranking ────────────────────────────────────────────────────────
-# Ported from mf-research-qr-main/engine/calculation_engine.py (section E9),
-# which is the LOCKED source of truth for this logic on that project — do not
-# re-derive or "improve" the bracket-sizing rule here; if the rule itself
+# Ported from mf-research-qr-main/engine/calculation_engine.py (sections E1,
+# E3-E5, E9), which is the LOCKED source of truth for this logic on that
+# project — do not re-derive or "improve" any of it here; if the rule itself
 # needs to change, that happens in calculation_engine.py first and this port
 # is updated to match, not the other way round. Logic and doc comments below
-# are carried over near-verbatim from there; only the surrounding wiring
-# (get_quartile_ranking, which pulls returns via get_category_returns instead
-# of a SQLite-backed pipeline) is new to this server.
+# are carried over near-verbatim from there.
+#
+# CALENDAR PERIODS, NOT TRAILING WINDOWS. This is the one point where it would
+# be easy to (wrongly) reuse this server's existing get_category_returns/
+# _resolve_window machinery — those compute a ROLLING window ending at each
+# fund's own latest NAV (e.g. "3M" = today minus 3 months, always). The source
+# repo's quartile ranking is fed EXCLUSIVELY by fixed CALENDAR periods (a
+# specific month, quarter, or year), never by a rolling window — see
+# build_json.py's returns_grid, built from month_return/quarter_return/
+# annual_return, feeding rank_and_quartile directly. The two answer different
+# questions ("what did September do" vs "what's the trailing 1-month return
+# today") and are NOT interchangeable — see the calendar-vs-rolling note in
+# the field guide. get_quartile_ranking below is built on calendar periods to
+# match the source exactly, independent of get_category_returns.
+
+_CALENDAR_SEARCH_WINDOW = 10  # calendar days cap for NAV resolution — E1
+
+
+def _resolve_nav_bounded(
+    con, scheme_code: str, target_date: date, direction: str,
+) -> tuple[Optional[date], Optional[float]]:
+    """
+    E1 _resolve_nav: NAV (or None) nearest target_date in `direction`
+    ("prev" or "next"), bounded by _CALENDAR_SEARCH_WINDOW calendar days.
+
+    Unlike this server's other NAV-snapping (_resolve_window's "before"/
+    "after", which walks back indefinitely), a resolution more than
+    _CALENDAR_SEARCH_WINDOW days from target_date is treated as NOT FOUND
+    (None, None) rather than returned — matching calculation_engine.py's own
+    bound exactly, so a long-dormant data gap fails a calendar period's
+    return the same way it does on the source dashboard, rather than
+    silently substituting a stale NAV from weeks earlier.
+    """
+    op, order = ("<=", "DESC") if direction == "prev" else (">=", "ASC")
+    row = con.execute(
+        f"""SELECT nav_date, nav FROM nav_history
+            WHERE scheme_code = ? AND nav_date {op} ?
+            ORDER BY nav_date {order} LIMIT 1""",
+        [scheme_code, target_date],
+    ).fetchone()
+    if row is None:
+        return None, None
+    resolved_date, nav = row
+    if abs((resolved_date - target_date).days) > _CALENDAR_SEARCH_WINDOW:
+        return None, None
+    return resolved_date, nav
+
+
+_QUARTER_STARTS = {1: (1, 1), 2: (4, 1), 3: (7, 1), 4: (10, 1)}
+_QUARTER_ENDS = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+
+
+def _calendar_period_return(
+    con, scheme_code: str, cadence: str, year: int,
+    month_or_quarter: Optional[int] = None, as_of: Optional[date] = None,
+) -> Optional[float]:
+    """
+    E3/E4/E5: point-to-point return for ONE calendar period — a specific
+    month, quarter, or year — matching month_return/quarter_return/
+    annual_return exactly.
+
+    cadence: "month" (month_or_quarter = 1-12), "quarter" (1-4), or "year"
+    (month_or_quarter ignored).
+
+    START is the PREVIOUS period's close, not the period's first day — e.g.
+    September starts at 31 August's NAV, Q3 starts at 30 June's, 2026 starts
+    at 31 December 2025's. This is period_start_value's own correction (see
+    its docstring in the source): resolving NEAREST-NEXT from the period's
+    first day instead silently drops the opening day from every period,
+    which measurably undercounts returns (documented there as -1.72pp/year
+    on monthly figures alone).
+
+    END: for a COMPLETED period, the last NAV on/before that period's last
+    calendar day. For the CURRENT (still-running) period, end = the fund's
+    own anchor (latest NAV on/before `as_of`, default today) — i.e. MTD/QTD/
+    YTD for whichever period is still open. This is why the SAME month can
+    show a different return depending on what day you ask: on 10 September
+    it is MTD-to-date; by 30 September (or once October's data exists) it is
+    the completed month's full return.
+
+    Returns None (not raised) when the fund lacks NAV data covering the
+    period — a fund that launched inside the period, or a start/end more
+    than _CALENDAR_SEARCH_WINDOW days from any actual NAV — so a caller can
+    tell "not eligible this period" apart from a hard error.
+    """
+    today = as_of or date.today()
+
+    if cadence == "month":
+        period_first_day = date(year, month_or_quarter, 1)
+        current = (year == today.year and month_or_quarter == today.month)
+    elif cadence == "quarter":
+        qsm, qsd = _QUARTER_STARTS[month_or_quarter]
+        period_first_day = date(year, qsm, qsd)
+        current_quarter = (today.month - 1) // 3 + 1
+        current = (year == today.year and month_or_quarter == current_quarter)
+    elif cadence == "year":
+        period_first_day = date(year, 1, 1)
+        current = (year == today.year)
+    else:
+        raise ValueError(f"cadence must be 'month', 'quarter', or 'year', got {cadence!r}.")
+
+    # Start: previous period's close (day BEFORE this period opens), NEAREST-PREVIOUS.
+    day_before = period_first_day - timedelta(days=1)
+    _start_d, nav_start = _resolve_nav_bounded(con, scheme_code, day_before, "prev")
+    if nav_start is None:
+        return None
+
+    if current:
+        anchor_row = con.execute(
+            "SELECT MAX(nav_date) FROM nav_history WHERE scheme_code = ? AND nav_date <= ?",
+            [scheme_code, today],
+        ).fetchone()
+        T = anchor_row[0] if anchor_row else None
+        if T is None:
+            return None
+        end_row = con.execute(
+            "SELECT nav FROM nav_history WHERE scheme_code = ? AND nav_date = ?",
+            [scheme_code, T],
+        ).fetchone()
+        nav_end = end_row[0] if end_row else None
+    else:
+        if cadence == "month":
+            import calendar as _calendar
+            last_day = _calendar.monthrange(year, month_or_quarter)[1]
+            end_target = date(year, month_or_quarter, last_day)
+        elif cadence == "quarter":
+            qem, qed = _QUARTER_ENDS[month_or_quarter]
+            end_target = date(year, qem, qed)
+        else:  # year
+            end_target = date(year, 12, 31)
+        _end_d, nav_end = _resolve_nav_bounded(con, scheme_code, end_target, "prev")
+
+    if nav_end is None:
+        return None
+    return (nav_end / nav_start - 1) * 100.0
 
 # Pools smaller than this keep the old ROUNDUP behaviour — see _quartile().
 _QUARTILE_SMALL_POOL = 3
@@ -1282,67 +1414,119 @@ def _rank_and_quartile(
 @mcp.tool()
 def get_quartile_ranking(
     category: str,
-    period: str,
-    staleness_days: int = 7,
+    year: int,
+    month: Optional[int] = None,
+    quarter: Optional[int] = None,
+    as_of: Optional[str] = None,
 ) -> dict:
-    """Quartile ranking of every fund in a category for one period.
+    """Quartile ranking of every fund in a category for ONE CALENDAR PERIOD.
 
-    Ranks funds by return_pct (best = rank 1) and buckets them into quartiles
-    (1 = best) using the SAME bracket-sizing rule as the mf-research-qr
-    dashboard's Quartile Ranking tab: equal brackets of n//4, with any
-    remainder handed to the BOTTOM quartiles (Q4 first, then Q3, then Q2) —
-    NOT the naive ROUNDUP formula, which promotes spare funds into Q1 instead.
-    Categories with fewer than 3 eligible funds fall back to the ROUNDUP rule,
-    since bottom-loading a pool that small reads badly (see _quartile()).
+    Ranks funds by their return for that specific month, quarter, or year
+    (best = rank 1) and buckets them into quartiles (1 = best) using the SAME
+    bracket-sizing rule as the mf-research-qr dashboard's Quartile Ranking
+    tab: equal brackets of n//4, with any remainder handed to the BOTTOM
+    quartiles (Q4 first, then Q3, then Q2) — NOT the naive ROUNDUP formula,
+    which promotes spare funds into Q1 instead. Categories with fewer than 3
+    eligible funds fall back to the ROUNDUP rule (see _quartile()).
 
-    Built on top of get_category_returns — same staleness handling, same
-    period conventions, same eligibility rules. A fund that is stale or has
-    no return_pct for the period is EXCLUDED from ranking/quartile (both come
-    back None) but still listed in `results`, same as get_category_returns
-    marks it. This mirrors calculation_engine.py's rank_and_quartile(), which
-    only ranks eligible (non-None) returns and leaves everyone else at
-    (None, None).
+    THIS IS A CALENDAR PERIOD, NOT A TRAILING WINDOW — deliberately different
+    from get_fund_returns/get_category_returns, which measure a ROLLING
+    window ending at each fund's own latest NAV (e.g. "3M" = today minus 3
+    months). This tool instead matches calculation_engine.py's month_return/
+    quarter_return/annual_return exactly:
+      - START is the PREVIOUS period's close, not the period's first day —
+        September starts at 31 August's NAV, Q3 at 30 June's, a year at the
+        prior 31 December's.
+      - END is that period's own last calendar day, UNLESS it is the
+        CURRENT (still-running) period, in which case end = as_of (default
+        today) — i.e. this becomes MTD/QTD/YTD for whichever period is
+        still open, and the same month can show a different return
+        depending on what day you ask it.
+      - NAV resolution is capped at 10 calendar days from the target date
+        (same as the source); beyond that, a fund is treated as having no
+        data for the period rather than matched to a stale NAV from weeks
+        earlier.
+    See get_category_returns for the rolling-window version of "every fund
+    in a category, ranked" if that is what you actually want.
+
+    Exactly one of month or quarter should be given (year alone means the
+    full calendar year). Funds with no return for the period (not yet
+    launched, or NAV history doesn't reach within 10 days of the period
+    boundary) get rank/quartile = None but are still listed in `results`.
 
     Args:
         category: Category name (case-insensitive).
-        period: One of 1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y,YTD,MTD,SI.
-        staleness_days: Max allowed lag from the category as-of date before a
-            fund's return is treated as ineligible for ranking (default 7),
-            same semantics as get_category_returns.
+        year: Calendar year, e.g. 2026.
+        month: 1-12, for a monthly ranking. Omit if using quarter or ranking
+            the whole year.
+        quarter: 1-4, for a quarterly ranking (Q1=Jan-Mar, ..., Q4=Oct-Dec).
+            Omit if using month or ranking the whole year.
+        as_of: ISO date (YYYY-MM-DD) to evaluate "is this the current period"
+            against — defaults to today. Only affects whether the CURRENT
+            period is treated as still-running (MTD/QTD/YTD) vs. completed;
+            has no effect on any already-completed period.
     """
-    base = get_category_returns(category, period, staleness_days=staleness_days)
-    if base.get("error"):
-        return base
+    if month is not None and quarter is not None:
+        return {"category": category.upper(), "error": "Pass at most one of month or quarter, not both."}
+    if month is not None and not (1 <= month <= 12):
+        return {"category": category.upper(), "error": f"month must be 1-12, got {month}."}
+    if quarter is not None and not (1 <= quarter <= 4):
+        return {"category": category.upper(), "error": f"quarter must be 1-4, got {quarter}."}
 
-    # Eligible = has a return AND is not stale, matching get_category_returns'
-    # own definition of what feeds avg_return_pct/avg_cagr_pct — quartiles
-    # should be computed over the same eligible set, not a different one.
-    eligible_returns = {
-        r["scheme_code"]: r["return_pct"]
-        for r in base["results"]
-        if r["return_pct"] is not None and not r["stale"]
-    }
-    ranks = _rank_and_quartile(eligible_returns)
+    if month is not None:
+        cadence, m_or_q, period_label = "month", month, f"{year}-{month:02d}"
+    elif quarter is not None:
+        cadence, m_or_q, period_label = "quarter", quarter, f"{year}-Q{quarter}"
+    else:
+        cadence, m_or_q, period_label = "year", None, str(year)
+
+    try:
+        as_of_date = date.fromisoformat(as_of) if as_of else None
+    except ValueError as exc:
+        return {"category": category.upper(), "error": f"Bad as_of date: {exc}"}
+
+    con = _db()
+    rows = con.execute(
+        """SELECT scheme_code, scheme_name, fund_house FROM scheme_master
+           WHERE UPPER(category) = UPPER(?) ORDER BY scheme_name""",
+        [category],
+    ).fetchall()
+
+    if not rows:
+        return {
+            "category": category.upper(), "period": period_label,
+            "total_funds": 0, "eligible_for_ranking": 0, "results": [],
+            "error": f"No funds found for category '{category}'. "
+                     "Use list_categories() to see valid names.",
+        }
 
     results = []
-    for r in base["results"]:
-        rank, q = ranks.get(r["scheme_code"], (None, None))
-        results.append({**r, "rank": rank, "quartile": q})
+    eligible_returns = {}
+    for code, name, house in rows:
+        ret = _calendar_period_return(con, code, cadence, year, m_or_q, as_of_date)
+        results.append({
+            "scheme_code": code, "scheme_name": name, "fund_house": house,
+            "return_pct": round(ret, 4) if ret is not None else None,
+        })
+        if ret is not None:
+            eligible_returns[code] = ret
 
-    # Best-first within each quartile, unranked funds (stale/errored/no data)
-    # pushed to the end — a more useful default reading order for a quartile
-    # table than get_category_returns' own sort_by, which this tool does not
-    # expose (rank IS the sort here).
+    ranks = _rank_and_quartile(eligible_returns)
+    for r in results:
+        rank, q = ranks.get(r["scheme_code"], (None, None))
+        r["rank"] = rank
+        r["quartile"] = q
+
+    # Best-first within each quartile, unranked funds (no return this
+    # period) pushed to the end.
     results.sort(key=lambda r: (r["rank"] is None, r["rank"] if r["rank"] is not None else 0))
 
     return {
-        "category": base["category"],
-        "period": base["period"],
-        "as_of": base["as_of"],
-        "staleness_days": staleness_days,
-        "total_funds": base["total_funds"],
+        "category": category.upper(),
+        "period": period_label,
+        "cadence": cadence,
+        "total_funds": len(results),
         "eligible_for_ranking": len(eligible_returns),
-        "excluded_stale": base["excluded_stale"],
         "results": results,
     }
 
@@ -1531,33 +1715,34 @@ def get_fund_rolling_returns(
 
 
 def _quartile_journey(
-    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1M",
+    scheme_code: str, cadence: str, periods: int, as_of: Optional[date] = None,
 ) -> dict:
     """
-    How a fund's quartile WITHIN ITS CATEGORY has trended: at each of several
-    past observation dates, compute the fund's trailing `window` return and
-    every category peer's, then rank/quartile the fund among its peers as of
-    that date — same _quartile() bracket rule as get_quartile_ranking.
+    How a fund's quartile WITHIN ITS CATEGORY has trended across several
+    CALENDAR periods — matching mf-research-qr-main's quartile_journeys
+    exactly (calculation_engine.py section E10), which is built entirely on
+    the calendar month_return/quarter_return/annual_return, never a rolling
+    trailing window. See get_quartile_ranking's own note on why the two are
+    not interchangeable.
+
+    At each of the last `periods` calendar months/quarters/years (most
+    recent first, oldest going back `periods`-1 further), compute the
+    fund's own calendar-period return via _calendar_period_return, and every
+    category peer's, then rank/quartile the fund among its peers for that
+    SAME period — same _quartile() bracket rule as get_quartile_ranking.
 
     Unlike get_quartile_ranking (one category, one period, every fund), this
-    is one fund, one category, MANY periods — the category-relative
-    counterpart of _rolling_returns' fund-only trend.
+    is one fund, one category, MANY periods.
 
-    All of a category's NAV history over the full span needed is fetched in
-    ONE query up front (not once per fund per observation point), then every
-    observation date's rank is computed against that same in-memory table —
-    avoiding O(funds x points) round trips for what would otherwise be a
-    slow call on a large category.
-
-    Returns points OLDEST-FIRST, each with obs_date, return_pct, quartile,
-    peer_count, category_min, category_max, category_median. A point is
-    omitted (not zero-filled) when the fund itself has no return that far
-    back (predates inception), same as _rolling_returns.
+    Returns points OLDEST-FIRST, each with period (the calendar label, e.g.
+    "2026-06" or "2026-Q2"), return_pct, rank, quartile, peer_count,
+    category_min, category_max, category_median. A point is omitted (not
+    zero-filled) when the fund itself has no return for that period
+    (predates inception, or NAV history doesn't reach within
+    _CALENDAR_SEARCH_WINDOW days of the period boundary).
     """
-    _period_length_days_hint(window)
-    _period_length_days_hint(step)
-    if not _PERIOD_LENGTH_RE.match(lookback.upper().strip()):
-        raise ValueError(f"lookback must be a fixed-length period like '1Y', got {lookback!r}.")
+    if periods < 1:
+        raise ValueError(f"periods must be at least 1, got {periods}.")
 
     con = _db()
     meta = con.execute(
@@ -1571,77 +1756,63 @@ def _quartile_journey(
         return {"scheme_code": scheme_code, "scheme_name": scheme_name,
                 "error": "This fund has no category on file; cannot rank it against peers."}
 
-    anchor_row = con.execute(
-        "SELECT MAX(nav_date) FROM nav_history WHERE scheme_code = ?", [scheme_code]).fetchone()
-    latest_anchor = anchor_row[0] if anchor_row else None
-    if latest_anchor is None:
-        return {"scheme_code": scheme_code, "scheme_name": scheme_name,
-                "error": "no NAV data for this scheme"}
+    peer_rows = con.execute(
+        "SELECT scheme_code FROM scheme_master WHERE UPPER(category) = UPPER(?)",
+        [category]).fetchall()
+    peer_codes = [r[0] for r in peer_rows]
 
-    earliest_anchor = _step_back(latest_anchor, lookback.upper().strip())
-    # Pad one more window's length further back so even the EARLIEST
-    # observation point has enough prior NAV history to compute its own
-    # trailing return (that return's start_target reaches before
-    # earliest_anchor by up to one window).
-    window_pad = _step_back(earliest_anchor, window.upper().strip())
+    today = as_of or date.today()
 
-    obs_dates = _rolling_observation_dates(latest_anchor, earliest_anchor, step)
+    # Build the list of (year, month_or_quarter) tuples for the last
+    # `periods` cadence units ending at `today`'s period, most-recent first —
+    # same step-back arithmetic _step_back uses elsewhere in this file, kept
+    # local here since month/quarter arithmetic needs the (year, unit) pair
+    # shape rather than a single date.
+    period_keys: list[tuple[int, Optional[int]]] = []
+    if cadence == "month":
+        y, m = today.year, today.month
+        for _ in range(periods):
+            period_keys.append((y, m))
+            m -= 1
+            if m == 0:
+                m, y = 12, y - 1
+    elif cadence == "quarter":
+        y, q = today.year, (today.month - 1) // 3 + 1
+        for _ in range(periods):
+            period_keys.append((y, q))
+            q -= 1
+            if q == 0:
+                q, y = 4, y - 1
+    elif cadence == "year":
+        for i in range(periods):
+            period_keys.append((today.year - i, None))
+    else:
+        raise ValueError(f"cadence must be 'month', 'quarter', or 'year', got {cadence!r}.")
 
-    # One bulk fetch of the whole category's NAV history over the padded
-    # span, joined to scheme_master for the category filter — every
-    # observation date's ranking is computed against this same fetch rather
-    # than re-querying per point.
-    cat_rows = con.execute(
-        """SELECT n.scheme_code, n.nav_date, n.nav
-           FROM nav_history n
-           JOIN scheme_master m ON m.scheme_code = n.scheme_code
-           WHERE UPPER(m.category) = UPPER(?) AND n.nav_date BETWEEN ? AND ?
-           ORDER BY n.scheme_code, n.nav_date""",
-        [category, window_pad, latest_anchor],
-    ).fetchall()
-
-    # code -> sorted [(nav_date, nav), ...], for fast on/before and on/after
-    # lookups per observation point without re-querying DuckDB each time.
-    by_code: dict[str, list[tuple[date, float]]] = {}
-    for code, d, v in cat_rows:
-        by_code.setdefault(code, []).append((d, v))
-
-    def _nav_on_or_before(series: list[tuple[date, float]], target: date) -> Optional[float]:
-        best = None
-        for d, v in series:  # series is nav_date-ascending
-            if d > target:
-                break
-            best = v
-        return best
-
-    def _nav_on_or_after(series: list[tuple[date, float]], target: date) -> Optional[float]:
-        for d, v in series:
-            if d >= target:
-                return v
-        return None
+    def _label(year: int, m_or_q: Optional[int]) -> str:
+        if cadence == "month":
+            return f"{year}-{m_or_q:02d}"
+        if cadence == "quarter":
+            return f"{year}-Q{m_or_q}"
+        return str(year)
 
     points = []
-    for obs_date in reversed(obs_dates):  # oldest first
-        start_target, _end_target, _snap = _resolve_window(
-            window.upper().strip(), obs_date, date.min)
-
+    for year, m_or_q in reversed(period_keys):  # oldest first
         peer_returns: dict[str, float] = {}
-        for code, series in by_code.items():
-            end_nav = _nav_on_or_before(series, obs_date)
-            start_nav = _nav_on_or_after(series, start_target)
-            if end_nav is None or start_nav is None or start_nav == 0:
-                continue
-            peer_returns[code] = (end_nav / start_nav - 1) * 100.0
+        for code in peer_codes:
+            ret = _calendar_period_return(con, code, cadence, year, m_or_q, today)
+            if ret is not None:
+                peer_returns[code] = ret
 
         target_return = peer_returns.get(scheme_code)
         if target_return is None:
-            continue  # fund not yet inception / no data at this point — skip
+            continue  # fund not yet inception / no data this period — skip
 
         ranks = _rank_and_quartile(peer_returns)
         rank, quartile = ranks[scheme_code]
         values = sorted(peer_returns.values())
         points.append({
-            "obs_date": str(obs_date),
+            "period": _label(year, m_or_q),
             "return_pct": round(target_return, 4),
             "rank": rank,
             "quartile": quartile,
@@ -1653,46 +1824,206 @@ def _quartile_journey(
 
     return {
         "scheme_code": scheme_code, "scheme_name": scheme_name, "category": category,
-        "window": window.upper().strip(), "lookback": lookback.upper().strip(),
-        "step": step.upper().strip(),
+        "cadence": cadence, "periods_requested": periods,
         "count": len(points), "points": points,
+    }
+
+
+def _quartile_journey_category(
+    category: str, cadence: str, periods: int, as_of: Optional[date] = None,
+) -> dict:
+    """
+    Category-wide counterpart of _quartile_journey: EVERY fund in `category`,
+    ranked against each other at each of the last `periods` calendar
+    periods, in ONE pass — not one _quartile_journey call per fund.
+
+    WHY THIS EXISTS: _quartile_journey(scheme_code=...) already computes
+    every peer's return at each period internally, just to rank the ONE fund
+    it was asked about — then throws that peer data away. Calling it once
+    per fund in a category (e.g. 35 times for Large Cap) redundantly repeats
+    that same per-period peer computation 35 times over: fund A's call
+    computes B's, C's, ...'s returns just to rank A, then fund B's call
+    recomputes A's, C's, ...'s again just to rank B, and so on. This
+    function computes each fund's return exactly ONCE per period, ranks
+    everyone against each other in that single pass, and returns every
+    fund's journey together — O(funds x periods) work either way, but done
+    once instead of duplicated `funds` times over, and in 1 tool call
+    instead of `funds`.
+
+    Returns the same per-fund journey shape as _quartile_journey (points
+    oldest-first, each with period/return_pct/rank/quartile/peer_count/
+    category_min/category_max/category_median), nested under each fund's
+    scheme_code, plus scheme_name for display without a second lookup.
+    """
+    if periods < 1:
+        raise ValueError(f"periods must be at least 1, got {periods}.")
+
+    con = _db()
+    fund_rows = con.execute(
+        """SELECT scheme_code, scheme_name FROM scheme_master
+           WHERE UPPER(category) = UPPER(?) ORDER BY scheme_name""",
+        [category]).fetchall()
+    if not fund_rows:
+        return {
+            "category": category.upper(), "cadence": cadence, "periods_requested": periods,
+            "funds": {},
+            "error": f"No funds found for category '{category}'. Use list_categories() to see valid names.",
+        }
+    names_by_code = {code: name for code, name in fund_rows}
+    all_codes = list(names_by_code)
+
+    today = as_of or date.today()
+
+    period_keys: list[tuple[int, Optional[int]]] = []
+    if cadence == "month":
+        y, m = today.year, today.month
+        for _ in range(periods):
+            period_keys.append((y, m))
+            m -= 1
+            if m == 0:
+                m, y = 12, y - 1
+    elif cadence == "quarter":
+        y, q = today.year, (today.month - 1) // 3 + 1
+        for _ in range(periods):
+            period_keys.append((y, q))
+            q -= 1
+            if q == 0:
+                q, y = 4, y - 1
+    elif cadence == "year":
+        for i in range(periods):
+            period_keys.append((today.year - i, None))
+    else:
+        raise ValueError(f"cadence must be 'month', 'quarter', or 'year', got {cadence!r}.")
+
+    def _label(year: int, m_or_q: Optional[int]) -> str:
+        if cadence == "month":
+            return f"{year}-{m_or_q:02d}"
+        if cadence == "quarter":
+            return f"{year}-Q{m_or_q}"
+        return str(year)
+
+    # scheme_code -> list of points, oldest-first (built up as we walk
+    # period_keys most-recent-first below, same as _quartile_journey).
+    points_by_code: dict[str, list[dict]] = {code: [] for code in all_codes}
+
+    for year, m_or_q in reversed(period_keys):  # oldest first
+        # Each fund's return computed ONCE for this period — this is the
+        # loop inversion that avoids the O(funds^2 x periods) blowup of
+        # calling _quartile_journey per fund.
+        period_returns: dict[str, float] = {}
+        for code in all_codes:
+            ret = _calendar_period_return(con, code, cadence, year, m_or_q, today)
+            if ret is not None:
+                period_returns[code] = ret
+
+        if not period_returns:
+            continue  # no fund in the category has data for this period
+
+        ranks = _rank_and_quartile(period_returns)
+        values = sorted(period_returns.values())
+        label = _label(year, m_or_q)
+        cat_min, cat_max = round(values[0], 4), round(values[-1], 4)
+        cat_median = round(statistics.median(values), 4)
+
+        for code, ret in period_returns.items():
+            rank, quartile = ranks[code]
+            points_by_code[code].append({
+                "period": label,
+                "return_pct": round(ret, 4),
+                "rank": rank,
+                "quartile": quartile,
+                "peer_count": len(period_returns),
+                "category_min": cat_min,
+                "category_max": cat_max,
+                "category_median": cat_median,
+            })
+
+    funds = {
+        code: {
+            "scheme_name": names_by_code[code],
+            "count": len(points_by_code[code]),
+            "points": points_by_code[code],
+        }
+        for code in all_codes
+    }
+
+    return {
+        "category": category.upper(), "cadence": cadence, "periods_requested": periods,
+        "fund_count": len(all_codes),
+        "funds": funds,
     }
 
 
 @mcp.tool()
 def get_fund_quartile_journey(
-    scheme_code: str, window: str, lookback: str = "1Y", step: str = "1M",
+    scheme_code: Optional[str] = None,
+    category: Optional[str] = None,
+    cadence: str = "month", periods: int = 12, as_of: Optional[str] = None,
 ) -> dict:
-    """How a fund's QUARTILE within its category has trended over time.
+    """How a fund's (or a WHOLE CATEGORY's) QUARTILE has trended, one
+    CALENDAR period at a time.
 
     get_quartile_ranking answers "where does every fund in a category rank
-    RIGHT NOW, for one period." This instead tracks ONE fund's quartile
-    across many past observation points, using the same trailing-`window`
-    return and the same _quartile() bracket rule at each point — so you can
-    see whether a fund has been a steady Q1, sliding from Q1 to Q4, or
-    bouncing around, rather than just its current snapshot.
+    for ONE calendar period." This instead tracks quartile standing across
+    the last several calendar months/quarters/years, using the SAME
+    calendar-period return and _quartile() bracket rule at each one — so you
+    can see whether a fund has been a steady Q1, sliding from Q1 to Q4, or
+    bouncing around, rather than just its current standing.
 
-    Example: window="3M", lookback="1Y", step="1M" gives ~12 points, one per
-    month, each showing where the fund's trailing-3-month return ranked
-    among its category peers as of that month.
+    Pass EXACTLY ONE of scheme_code or category:
+      - scheme_code: one fund's journey against its own category's peers —
+        {scheme_code, scheme_name, category, points: [...]}.
+      - category: EVERY fund in that category, ranked against each other at
+        each period, in ONE pass — {category, fund_count,
+        funds: {scheme_code: {scheme_name, points: [...]}, ...}}. Use this
+        instead of calling scheme_code= once per fund in a category: that
+        would recompute every OTHER fund's return at each period redundantly
+        for every call (O(funds) times over for a category of that size),
+        where the category form computes each fund's return exactly once
+        per period. For a 35-fund category this is 1 tool call instead of
+        35, doing a fraction of the underlying NAV lookups.
+
+    Matches mf-research-qr-main's quartile_journeys exactly: calendar
+    periods, not a rolling trailing window — see get_quartile_ranking's own
+    note on why the two are not interchangeable. The most recent period
+    shown may be still-running (MTD/QTD/YTD) if `as_of` falls inside it,
+    same as get_quartile_ranking.
+
+    Example: cadence="month", periods=12 gives one point per calendar month
+    for the last 12 months, each showing where the return for THAT month
+    ranked among category peers for that same month.
 
     Args:
-        scheme_code: Fund scheme code (from search_funds).
-        window: Fixed-length trailing period to rank at each point — one of
-            1W,2W,1M,3M,6M,9M,1Y,2Y,3Y,5Y. NOT YTD/MTD/SI.
-        lookback: How far back to sample, same vocabulary as window
-            (default "1Y").
-        step: Spacing between observation points, same vocabulary as window
-            (default "1M"). step < window overlaps consecutive windows;
-            step == window gives independent back-to-back blocks — this is
-            the more natural default here since a "quartile journey" usually
-            means distinct periods (like the source dashboard's monthly/
-            quarterly modes), not a smoothed rolling trend.
+        scheme_code: Fund scheme code (from search_funds). Mutually
+            exclusive with category.
+        category: Category name (case-insensitive), for every fund in it at
+            once. Mutually exclusive with scheme_code.
+        cadence: "month" (default), "quarter", or "year".
+        periods: How many trailing calendar periods to show, most recent
+            first when as_of is inside an incomplete one (default 12).
+        as_of: ISO date (YYYY-MM-DD) to anchor "today" against — defaults to
+            today. Only affects which period is treated as current/
+            incomplete; has no effect on already-completed periods.
     """
+    if (scheme_code is None) == (category is None):
+        return {"error": "Pass exactly one of scheme_code or category, not both or neither."}
     try:
-        return _quartile_journey(scheme_code, window, lookback, step)
+        as_of_date = date.fromisoformat(as_of) if as_of else None
     except ValueError as exc:
-        return {"scheme_code": scheme_code, "error": str(exc)}
+        return {"error": f"Bad as_of date: {exc}"}
+    if cadence not in ("month", "quarter", "year"):
+        return {"error": f"cadence must be 'month', 'quarter', or 'year', got {cadence!r}."}
+
+    if scheme_code is not None:
+        try:
+            return _quartile_journey(scheme_code, cadence, periods, as_of_date)
+        except ValueError as exc:
+            return {"scheme_code": scheme_code, "error": str(exc)}
+    else:
+        try:
+            return _quartile_journey_category(category, cadence, periods, as_of_date)
+        except ValueError as exc:
+            return {"category": category.upper(), "error": str(exc)}
 
 
 @mcp.tool()
